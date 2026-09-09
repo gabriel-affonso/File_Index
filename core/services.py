@@ -67,3 +67,26 @@ class ExplorerService:
             if include_folders and directory in folder_by_path:
                 edges.append({'source': f'folder:{folder_by_path[directory]}', 'target': f'file:{file_id}', 'kind': 'contains'})
         return {'nodes': nodes, 'edges': edges, 'truncated': len(files) == file_limit}
+    def root_graph(self):
+        roots = self.folder_roots()
+        nodes = [{'id': 'workspace', 'label': 'Local Explorer', 'type': 'workspace'}]
+        edges = []
+        for folder_id, path, name, count, _ in roots:
+            nodes.append({'id': f'folder:{folder_id}', 'label': name, 'type': 'folder', 'path': path, 'count': count or 0})
+            edges.append({'source': 'workspace', 'target': f'folder:{folder_id}', 'kind': 'root'})
+        return {'nodes': nodes, 'edges': edges, 'title': 'Pastas indexadas'}
+    def folder_graph(self, path: str, include_files: bool = True, file_limit: int = 80):
+        current = self.catalog.conn.execute('SELECT folder_id,path,name,file_count FROM folders WHERE path=?', [path]).fetchone()
+        if not current: return {'nodes': [], 'edges': [], 'title': 'Pasta não encontrada'}
+        folder_id, folder_path, folder_name, count = current
+        nodes = [{'id': f'folder:{folder_id}', 'label': folder_name, 'type': 'folder', 'path': folder_path, 'count': count or 0, 'center': True}]
+        edges = []
+        folders, files = self.folder_children(path)
+        for child_id, child_path, child_name, child_count, _ in folders:
+            nodes.append({'id': f'folder:{child_id}', 'label': child_name, 'type': 'folder', 'path': child_path, 'count': child_count or 0})
+            edges.append({'source': f'folder:{folder_id}', 'target': f'folder:{child_id}', 'kind': 'contains'})
+        if include_files:
+            for file_id, filename, file_path, category, _ in files[:file_limit]:
+                nodes.append({'id': f'file:{file_id}', 'file_id': file_id, 'label': filename, 'type': 'file', 'path': file_path, 'category': category})
+                edges.append({'source': f'folder:{folder_id}', 'target': f'file:{file_id}', 'kind': 'contains'})
+        return {'nodes': nodes, 'edges': edges, 'title': folder_path, 'truncated': len(files) > file_limit}

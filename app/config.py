@@ -16,7 +16,11 @@ CACHE_DIR = DATA_DIR / "cache"
 DATABASE_PATH = DATA_DIR / "catalog.duckdb"
 
 SUPPORTED_EXTENSIONS = {".pdf", ".xlsx", ".xls", ".csv", ".docx", ".txt", ".md", ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"}
-IGNORED_NAMES = {".git", "node_modules", "__pycache__", "cache"}
+IGNORED_NAMES = {
+    ".git", "node_modules", "__pycache__", "cache", ".venv", "venv", "env",
+    ".tox", ".pytest_cache", ".mypy_cache", "site-packages", "dist", "build",
+    "runs", "pilot-payment-rules", ".next", ".nuxt", "coverage", ".coverage",
+}
 IGNORED_PREFIXES = ("~$",)
 CONFIG_PATH = DATA_DIR / "config.toml" if getattr(sys, 'frozen', False) else APP_ROOT / "config.toml"
 

@@ -13,10 +13,14 @@ def category(path: Path):
 
 class Indexer:
     def __init__(self, catalog: Catalog): self.catalog = catalog
+    @staticmethod
+    def should_ignore(path: Path) -> bool:
+        parts = {part.casefold() for part in path.parts}
+        return bool(parts.intersection(IGNORED_NAMES)) or path.name.startswith(IGNORED_PREFIXES)
     def index_directory(self, root: str | Path, progress=lambda *_: None):
         root = Path(root).resolve(); indexed = skipped = errors = 0
         with self.catalog.lock: self.catalog.ensure_folder(root, root)
-        paths = [path for path in root.rglob('*') if path.is_file() and path.suffix.lower() in SUPPORTED_EXTENSIONS and not any(x in path.parts for x in IGNORED_NAMES) and not path.name.startswith(IGNORED_PREFIXES)]
+        paths = [path for path in root.rglob('*') if path.is_file() and path.suffix.lower() in SUPPORTED_EXTENSIONS and not self.should_ignore(path)]
         total = len(paths)
         progress(0, total, 'A preparar indexação…')
         for position, path in enumerate(paths, 1):
