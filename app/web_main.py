@@ -1,0 +1,66 @@
+"""Interface local sem dependência de Qt: abre no browser em localhost."""
+from __future__ import annotations
+import json, threading, webbrowser
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import parse_qs, urlparse
+from database.duckdb import Catalog
+from core.services import ExplorerService
+from indexing.indexer import Indexer
+
+catalog = Catalog(); service = ExplorerService(catalog)
+progress = {'active': False, 'current': 0, 'total': 0, 'name': '', 'result': ''}
+
+PAGE = r'''<!doctype html><html><head><meta charset="utf-8"><title>Local Knowledge Explorer</title><style>
+*{box-sizing:border-box}body{margin:0;background:#000;color:#dce9f5;font:14px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}header{height:62px;border-bottom:1px solid #17344b;display:flex;align-items:center;padding:0 24px;gap:16px;background:#000}h1{font-size:17px;letter-spacing:.5px;color:#dffaff;margin:0}input,button,select{background:#07111f;color:#dffaff;border:1px solid #1c3c58;border-radius:7px;padding:9px 12px}input{min-width:300px;flex:1}button:hover{border-color:#67e8f9;background:#0b2036;cursor:pointer}.shell{display:grid;grid-template-columns:190px 1fr;height:calc(100vh - 62px)}nav{border-right:1px solid #17344b;padding:18px 10px;background:#000}nav button{display:block;width:100%;text-align:left;border:0;background:transparent;color:#8eabc0;margin:3px 0}.content{padding:22px;overflow:auto}.grid{display:grid;grid-template-columns:55% 45%;height:calc(100vh - 130px);border:1px solid #17344b;border-radius:10px;overflow:hidden}.results{overflow:auto;border-right:1px solid #17344b}.row{padding:13px 16px;border-bottom:1px solid #10263a;cursor:pointer}.row:hover,.row.active{background:#0e3854}.muted{color:#7193aa;font-size:12px;margin-top:5px}.detail{padding:20px;overflow:auto;background:#02070c}.detail h2{margin-top:0;color:#dffaff}.chip{display:inline-block;border:1px solid #2c7da0;border-radius:13px;padding:3px 8px;color:#89e7ff;margin:3px}.progress{height:7px;background:#07111f;border-radius:4px;overflow:hidden}.progress i{display:block;height:100%;background:#42d9ff;transition:width .2s}.hidden{display:none}pre{white-space:pre-wrap;line-height:1.45;color:#c1d7e6}.graph{height:420px;border:1px solid #17344b;border-radius:10px;background:radial-gradient(circle at 50% 50%,#06111e,#000 70%);position:relative;overflow:hidden}.node{position:absolute;transform:translate(-50%,-50%);padding:13px 17px;border:2px solid #67e8f9;border-radius:20px;background:#060b14;color:#f1fbff;box-shadow:0 0 25px #167c9b88;cursor:grab}.edge{position:absolute;height:1px;background:#31516f;transform-origin:0 0}.tabs{display:flex;gap:8px;margin-bottom:18px}
+</style></head><body><header><h1>✦ LOCAL KNOWLEDGE EXPLORER</h1><input id="query" placeholder="Pesquisar ficheiros, conteúdo, pastas e colunas…"><button onclick="search()">Pesquisar</button></header><div class="shell"><nav><button onclick="show('search')">⌕ Pesquisa</button><button onclick="show('folders');loadRoots()">▱ Pastas</button><button onclick="openGraph()">◎ Grafo</button><button onclick="show('index')">◌ Indexação</button><button onclick="show('collections')">★ Coleções</button><p class="muted" style="padding:12px">Atalho Windows<br><b>Ctrl + Shift + Espaço</b></p></nav><main class="content"><section id="search"><div class="grid"><div class="results" id="results"></div><div class="detail" id="detail">Selecione um resultado para abrir o preview.</div></div></section><section id="folders" class="hidden"><h2>Índice de duas camadas</h2><p class="muted">Pastas primeiro. Dentro delas, ficheiros e datasets indexados.</p><div class="grid"><div class="results" id="folderTree"></div><div class="detail" id="folderDetail">Escolha uma pasta.</div></div></section><section id="graph" class="hidden"><h2>Grafo</h2><p class="muted">Arraste nós; relações e nós continuam em movimento suave.</p><div id="graphbox" class="graph"></div></section><section id="index" class="hidden"><h2>Indexar uma pasta</h2><p class="muted">Os ficheiros originais nunca são movidos ou alterados.</p><input id="folder" placeholder="C:\\Users\\...\\Documentos"><button onclick="indexFolder()">Iniciar indexação</button><p id="progressText" class="muted"></p><div class="progress"><i id="bar" style="width:0%"></i></div></section><section id="collections" class="hidden"><h2>Coleções</h2><p class="muted">As coleções e relações continuam disponíveis no catálogo local. A gestão avançada será ligada nesta interface no próximo passo.</p></section></main></div><script>
+let selected=null;function api(path,opt){return fetch(path,opt).then(r=>r.json())}function show(id){document.querySelectorAll('main section').forEach(x=>x.classList.add('hidden'));document.getElementById(id).classList.remove('hidden')}function esc(s){return String(s).replace(/[&<>]/g,x=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[x]))}
+function search(){let queryInput=document.getElementById('query'),resultBox=document.getElementById('results');api('/api/search?q='+encodeURIComponent(queryInput.value)).then(rows=>{resultBox.innerHTML=rows.length?rows.map(r=>`<div class="row" onclick="details('${r.id}')"><b>${esc(r.name)}</b><div class="muted">${esc(r.kind)} · ${esc(r.path)}</div></div>`).join(''):'<div class="row">Sem resultados.</div>'})}
+function details(id){selected=id;api('/api/details?id='+id).then(x=>{document.getElementById('detail').innerHTML=`<h2>${esc(x.name)}</h2><p class="muted">${esc(x.kind)} · ${esc(x.path)}</p><button onclick="openGraph()">Mostrar no grafo</button><h3>Preview</h3><pre>${esc(x.text||x.dataset||'Preview indisponível')}</pre><h3>Tags</h3>${(x.tags||[]).map(t=>'<span class="chip">#'+esc(t)+'</span>').join('')||'—'}<h3>Relações</h3>${(x.relations||[]).map(r=>'<span class="chip">→ '+esc(r[1])+'</span>').join('')||'—'}`})}
+function loadRoots(){let tree=document.getElementById('folderTree');api('/api/folders').then(rows=>tree.innerHTML=rows.map(x=>`<div class="row" onclick="openFolder('${encodeURIComponent(x.path)}')">📁 <b>${esc(x.name)}</b><div class="muted">${x.files} ficheiros · ${Math.round(x.bytes/1024/1024)} MB</div></div>`).join('')||'<div class="row">Ainda não existem pastas indexadas.</div>')}
+function openFolder(encoded){let path=decodeURIComponent(encoded),pane=document.getElementById('folderDetail');api('/api/folder?path='+encoded).then(x=>{pane.innerHTML=`<h2>${esc(x.path)}</h2><h3>Pastas</h3>${x.folders.map(f=>`<div class="row" onclick="openFolder('${encodeURIComponent(f.path)}')">📁 ${esc(f.name)} <span class="muted">${f.files} itens</span></div>`).join('')||'—'}<h3>Itens nesta pasta</h3>${x.files.map(f=>`<div class="row" onclick="details('${f.id}');show('search')">${f.kind==='spreadsheet'?'📊':'📄'} ${esc(f.name)}<div class="muted">${f.kind}</div></div>`).join('')||'—'}`})}
+function openGraph(){show('graph');let box=document.getElementById('graphbox');if(!selected){box.innerHTML='<p class="muted" style="padding:24px">Escolha primeiro um ficheiro na Pesquisa e clique em “Mostrar no grafo”.</p>';return}api('/api/graph?id='+selected).then(edges=>{box.innerHTML='';let nodes=[{label:'Selecionado',x:box.clientWidth/2,y:box.clientHeight/2,fixed:true}];edges.forEach((e,i)=>{let a=Math.PI*2*i/Math.max(edges.length,1);nodes.push({label:e[7],x:box.clientWidth/2+190*Math.cos(a),y:box.clientHeight/2+140*Math.sin(a)})});let lines=edges.map(()=>{let l=document.createElement('i');l.className='edge';box.append(l);return l});let els=nodes.map(n=>{let el=document.createElement('div');el.className='node';el.textContent=n.label;box.append(el);let drag=false;el.onpointerdown=e=>{drag=true;if(el.setPointerCapture)el.setPointerCapture(e.pointerId)};el.onpointermove=e=>{if(drag){let r=box.getBoundingClientRect();n.x=e.clientX-r.left;n.y=e.clientY-r.top}};el.onpointerup=()=>drag=false;return el});if(edges.length===0){let hint=document.createElement('p');hint.className='muted';hint.style.cssText='position:absolute;top:16px;left:16px';hint.textContent='Este ficheiro ainda não tem relações. O nó permanece visível; crie uma relação ou indexe conteúdo com um POC.';box.append(hint)}function tick(){for(let i=1;i<nodes.length;i++){let n=nodes[i],cx=nodes[0];let dx=cx.x-n.x,dy=cx.y-n.y,d=Math.max(1,Math.hypot(dx,dy));n.x+=dx*(d-210)*.004;n.y+=dy*(d-210)*.004;for(let j=1;j<nodes.length;j++)if(i!==j){let o=nodes[j],rx=n.x-o.x,ry=n.y-o.y,rd=Math.max(30,Math.hypot(rx,ry));n.x+=rx*1500/(rd*rd*rd);n.y+=ry*1500/(rd*rd*rd)}}nodes.forEach((n,i)=>{n.x=Math.max(65,Math.min(box.clientWidth-65,n.x));n.y=Math.max(45,Math.min(box.clientHeight-45,n.y));els[i].style.left=n.x+'px';els[i].style.top=n.y+'px';if(i){let c=nodes[0],dx=n.x-c.x,dy=n.y-c.y;lines[i-1].style.left=c.x+'px';lines[i-1].style.top=c.y+'px';lines[i-1].style.width=Math.hypot(dx,dy)+'px';lines[i-1].style.transform=`rotate(${Math.atan2(dy,dx)}rad)`}});requestAnimationFrame(tick)}tick()}).catch(error=>{box.innerHTML='<p class="muted" style="padding:24px">Não foi possível carregar o grafo: '+esc(error.message)+'</p>'})}
+function indexFolder(){let input=document.getElementById('folder');api('/api/index?path='+encodeURIComponent(input.value)).then(x=>{document.getElementById('progressText').textContent=x.message;poll()})}function poll(){api('/api/progress').then(p=>{let pct=p.total?Math.round(100*p.current/p.total):0;document.getElementById('bar').style.width=pct+'%';document.getElementById('progressText').textContent=p.active?`A indexar ${p.current}/${p.total}: ${p.name} (${pct}%)`:p.result;if(p.active)setTimeout(poll,350);else search()})}document.getElementById('query').addEventListener('keydown',e=>e.key==='Enter'&&search());search();
+</script></body></html>'''
+
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self,*args): pass
+    def send_json(self, value):
+        data=json.dumps(value,default=str).encode();self.send_response(200);self.send_header('Content-Type','application/json');self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data)
+    def do_GET(self):
+        parsed=urlparse(self.path); q=parse_qs(parsed.query)
+        if parsed.path=='/': self.send_response(200);self.send_header('Content-Type','text/html;charset=utf-8');self.send_header('Cache-Control','no-store, max-age=0');self.end_headers();self.wfile.write(PAGE.encode());return
+        if parsed.path=='/api/search': return self.send_json([{'id':r[0],'name':r[1],'path':r[2],'kind':r[4]} for r in service.search(q.get('q',[''])[0])])
+        if parsed.path=='/api/details':
+            row=service.details(q['id'][0]);cols=[x[0] for x in catalog.conn.description];d=dict(zip(cols,row));return self.send_json({'name':d['filename'],'path':d['path'],'kind':d['file_category'],'text':(d.get('text_content') or '')[:30000],'dataset':'\n'.join(f'{s}: {r} linhas × {c} colunas\n{columns}' for s,r,c,columns in service.dataset_preview(q['id'][0])),'tags':[t[0] for t in service.tags(q['id'][0])],'relations':service.relations(q['id'][0])})
+        if parsed.path=='/api/graph': return self.send_json(service.graph(q['id'][0]))
+        if parsed.path=='/api/folders': return self.send_json([{'id':r[0],'path':r[1],'name':r[2],'files':r[3],'bytes':r[4] or 0} for r in service.folder_roots()])
+        if parsed.path=='/api/folder':
+            folders, files = service.folder_children(q.get('path',[''])[0])
+            return self.send_json({'path':q.get('path',[''])[0], 'folders':[{'id':r[0],'path':r[1],'name':r[2],'files':r[3],'bytes':r[4] or 0} for r in folders], 'files':[{'id':r[0],'name':r[1],'path':r[2],'kind':r[3],'bytes':r[4]} for r in files]})
+        if parsed.path=='/api/progress': return self.send_json(progress)
+        if parsed.path=='/api/index':
+            path=Path(q.get('path',[''])[0])
+            if not path.is_dir(): return self.send_json({'message':'Pasta inválida.'})
+            if progress['active']: return self.send_json({'message':'Já existe uma indexação em curso.'})
+            def run():
+                progress.update(active=True,current=0,total=0,name='',result='')
+                a,b,c=Indexer(catalog).index_directory(path,lambda cur,total,name:progress.update(current=cur,total=total,name=name));progress.update(active=False,result=f'Concluído: {a} novos/alterados, {b} inalterados, {c} erros.')
+            threading.Thread(target=run,daemon=True).start();return self.send_json({'message':'Indexação iniciada.'})
+        self.send_error(404)
+
+def start_server():
+    server = None
+    for port in range(8765, 8776):
+        try:
+            server = ThreadingHTTPServer(('127.0.0.1', port), Handler)
+            break
+        except OSError:
+            continue
+    if server is None: raise RuntimeError('Não foi possível abrir uma porta local entre 8765 e 8775.')
+    url=f'http://127.0.0.1:{port}'
+    return server, url
+
+def main():
+    server, url = start_server()
+    print(f'Local Knowledge Explorer: {url}');webbrowser.open(url);server.serve_forever()
