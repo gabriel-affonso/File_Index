@@ -10,6 +10,12 @@ class ExplorerService:
           FROM files f LEFT JOIN document_content d ON d.file_id=f.file_id WHERE f.deleted=FALSE AND (lower(f.filename) LIKE ? OR lower(f.directory) LIKE ? OR lower(coalesce(d.text_content,'')) LIKE ? OR EXISTS (SELECT 1 FROM dataset_columns dc JOIN sheets s ON s.sheet_id=dc.sheet_id JOIN datasets ds ON ds.dataset_id=s.dataset_id WHERE ds.file_id=f.file_id AND lower(dc.column_name) LIKE ?)){condition} ORDER BY score DESC, f.filename''', params).fetchall()
     def details(self, file_id):
         return self.catalog.conn.execute('SELECT f.*, d.text_content, d.page_count FROM files f LEFT JOIN document_content d ON f.file_id=d.file_id WHERE f.file_id=?', [file_id]).fetchone()
+    def detail_record(self, file_id):
+        """Resultado autocontido; não depende de conn.description partilhado."""
+        cursor = self.catalog.conn.execute('SELECT f.*, d.text_content, d.page_count FROM files f LEFT JOIN document_content d ON f.file_id=d.file_id WHERE f.file_id=?', [file_id])
+        row = cursor.fetchone()
+        if row is None: return None
+        return dict(zip([column[0] for column in cursor.description], row))
     def dataset_preview(self, file_id):
         return self.catalog.conn.execute('SELECT s.sheet_name,s.row_count,s.column_count, string_agg(dc.column_name, \' | \') FROM datasets ds JOIN sheets s ON s.dataset_id=ds.dataset_id LEFT JOIN dataset_columns dc ON dc.sheet_id=s.sheet_id WHERE ds.file_id=? GROUP BY ALL', [file_id]).fetchall()
     def tags(self, file_id):

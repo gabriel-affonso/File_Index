@@ -32,14 +32,27 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         parsed=urlparse(self.path); q=parse_qs(parsed.query)
         if parsed.path=='/': self.send_response(200);self.send_header('Content-Type','text/html;charset=utf-8');self.send_header('Cache-Control','no-store, max-age=0');self.end_headers();self.wfile.write(PAGE.encode());return
-        if parsed.path=='/api/search': return self.send_json([{'id':r[0],'name':r[1],'path':r[2],'kind':r[4]} for r in service.search(q.get('q',[''])[0])])
+        if parsed.path=='/api/search':
+            with catalog.lock:
+                results = [{'id':r[0],'name':r[1],'path':r[2],'kind':r[4]} for r in service.search(q.get('q',[''])[0])]
+            return self.send_json(results)
         if parsed.path=='/api/details':
-            row=service.details(q['id'][0]);cols=[x[0] for x in catalog.conn.description];d=dict(zip(cols,row));return self.send_json({'name':d['filename'],'path':d['path'],'kind':d['file_category'],'text':(d.get('text_content') or '')[:30000],'dataset':'\n'.join(f'{s}: {r} linhas × {c} colunas\n{columns}' for s,r,c,columns in service.dataset_preview(q['id'][0])),'tags':[t[0] for t in service.tags(q['id'][0])],'relations':service.relations(q['id'][0])})
-        if parsed.path=='/api/graph': return self.send_json(service.graph(q['id'][0]))
-        if parsed.path=='/api/structure-graph': return self.send_json(service.structure_graph(q.get('folders',['1'])[0] != '0'))
-        if parsed.path=='/api/folders': return self.send_json([{'id':r[0],'path':r[1],'name':r[2],'files':r[3],'bytes':r[4] or 0} for r in service.folder_roots()])
+            with catalog.lock:
+                d = service.detail_record(q['id'][0])
+                if d is None: return self.send_json({'error': 'Ficheiro não encontrado.'})
+                payload = {'name':d['filename'],'path':d['path'],'kind':d['file_category'],'text':(d.get('text_content') or '')[:30000],'dataset':'\n'.join(f'{s}: {r} linhas × {c} colunas\n{columns}' for s,r,c,columns in service.dataset_preview(q['id'][0])),'tags':[t[0] for t in service.tags(q['id'][0])],'relations':service.relations(q['id'][0])}
+            return self.send_json(payload)
+        if parsed.path=='/api/graph':
+            with catalog.lock: payload = service.graph(q['id'][0])
+            return self.send_json(payload)
+        if parsed.path=='/api/structure-graph':
+            with catalog.lock: payload = service.structure_graph(q.get('folders',['1'])[0] != '0')
+            return self.send_json(payload)
+        if parsed.path=='/api/folders':
+            with catalog.lock: payload = [{'id':r[0],'path':r[1],'name':r[2],'files':r[3],'bytes':r[4] or 0} for r in service.folder_roots()]
+            return self.send_json(payload)
         if parsed.path=='/api/folder':
-            folders, files = service.folder_children(q.get('path',[''])[0])
+            with catalog.lock: folders, files = service.folder_children(q.get('path',[''])[0])
             return self.send_json({'path':q.get('path',[''])[0], 'folders':[{'id':r[0],'path':r[1],'name':r[2],'files':r[3],'bytes':r[4] or 0} for r in folders], 'files':[{'id':r[0],'name':r[1],'path':r[2],'kind':r[3],'bytes':r[4]} for r in files]})
         if parsed.path=='/api/progress': return self.send_json(progress)
         if parsed.path=='/api/index':

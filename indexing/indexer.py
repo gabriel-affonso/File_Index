@@ -15,18 +15,19 @@ class Indexer:
     def __init__(self, catalog: Catalog): self.catalog = catalog
     def index_directory(self, root: str | Path, progress=lambda *_: None):
         root = Path(root).resolve(); indexed = skipped = errors = 0
-        self.catalog.ensure_folder(root, root)
+        with self.catalog.lock: self.catalog.ensure_folder(root, root)
         paths = [path for path in root.rglob('*') if path.is_file() and path.suffix.lower() in SUPPORTED_EXTENSIONS and not any(x in path.parts for x in IGNORED_NAMES) and not path.name.startswith(IGNORED_PREFIXES)]
         total = len(paths)
         progress(0, total, 'A preparar indexação…')
         for position, path in enumerate(paths, 1):
             try:
-                self.catalog.ensure_folder(path.parent, root)
-                changed = self.index_file(path, root)
+                with self.catalog.lock:
+                    self.catalog.ensure_folder(path.parent, root)
+                    changed = self.index_file(path, root)
                 indexed += bool(changed); skipped += not changed
                 progress(position, total, path.name)
             except Exception: errors += 1
-        self.catalog.refresh_folder_stats(root)
+        with self.catalog.lock: self.catalog.refresh_folder_stats(root)
         self.catalog.conn.execute("UPDATE files SET deleted = TRUE WHERE directory LIKE ? AND NOT EXISTS (SELECT 1)", [str(root) + '%']) if False else None
         return indexed, skipped, errors
     def index_file(self, path: Path, root: Path | None = None):
@@ -45,8 +46,8 @@ class Indexer:
             self._poc_relations(file_id, text + ' ' + path.name)
         elif path.suffix.lower() in {'.xlsx','.xls','.csv'}:
             dataset_id = self.catalog.new_id(); self.catalog.conn.execute('INSERT INTO datasets VALUES (?, ?, ?)', [dataset_id, file_id, path.suffix[1:]])
-            for name, frame in extract_dataset(path):
-                sheet_id = self.catalog.new_id(); self.catalog.conn.execute('INSERT INTO sheets VALUES (?, ?, ?, ?, ?)', [sheet_id, dataset_id, name, len(frame), len(frame.columns)])
+            for name, frame, row_count in extract_dataset(path):
+                sheet_id = self.catalog.new_id(); self.catalog.conn.execute('INSERT INTO sheets VALUES (?, ?, ?, ?, ?)', [sheet_id, dataset_id, row_count if row_count is not None else len(frame), len(frame.columns)])
                 for col in frame.columns:
                     series = frame[col]; self.catalog.conn.execute('INSERT INTO dataset_columns VALUES (?, ?, ?, ?, ?, ?)', [self.catalog.new_id(), sheet_id, str(col), str(series.dtype), int(series.isna().sum()), int(series.nunique())])
                 self._poc_relations(file_id, ' '.join(map(str, frame.astype(str).head(1000).to_numpy().flatten())) + ' ' + path.name)

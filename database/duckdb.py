@@ -1,6 +1,7 @@
 from __future__ import annotations
 import uuid
 import sys
+import threading
 from pathlib import Path
 import duckdb
 from app.config import DATABASE_PATH
@@ -10,6 +11,9 @@ class Catalog:
     def __init__(self, path: Path = DATABASE_PATH):
         path.parent.mkdir(parents=True, exist_ok=True)
         self.conn = duckdb.connect(str(path))
+        # A ligação DuckDB é partilhada pelo indexador e pelo servidor local.
+        # Serializar acesso evita que uma query troque a metadata da outra.
+        self.lock = threading.RLock()
         # Em modo PyInstaller, schema.sql é carregado de sys._MEIPASS.
         asset_root = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parents[1]))
         schema = (asset_root / 'database' / 'schema.sql').read_text(encoding='utf-8')
