@@ -1,4 +1,6 @@
 from __future__ import annotations
+from collections import defaultdict
+from itertools import combinations
 from database.duckdb import Catalog
 
 class ExplorerService:
@@ -70,20 +72,20 @@ class ExplorerService:
             if include_folders and directory in folder_by_path:
                 edges.append({'source': f'folder:{folder_by_path[directory]}', 'target': f'file:{file_id}', 'kind': 'contains'})
         return {'nodes': nodes, 'edges': edges, 'truncated': len(files) == file_limit}
-    def root_graph(self):
+    def root_graph(self, include_files: bool = True, files_for_path: str | None = None):
         roots = self.folder_roots()
         # A configuração mais comum tem uma única pasta indexada. Abrir logo a
         # sua vizinhança torna o grafo útil no primeiro clique, com essa pasta
         # como centro, em vez de apresentar uma etapa intermédia vazia.
         if len(roots) == 1:
-            return self.folder_graph(roots[0][1])
+            return self.folder_graph(roots[0][1], include_files=include_files, files_for_path=files_for_path)
         nodes = [{'id': 'workspace', 'label': 'Local Explorer', 'type': 'workspace'}]
         edges = []
         for folder_id, path, name, count, _ in roots:
             nodes.append({'id': f'folder:{folder_id}', 'label': name, 'type': 'folder', 'path': path, 'count': count or 0})
             edges.append({'source': 'workspace', 'target': f'folder:{folder_id}', 'kind': 'root'})
         return {'nodes': nodes, 'edges': edges, 'title': 'Pastas indexadas'}
-    def folder_graph(self, path: str, include_files: bool = True, file_limit: int = 180, recursive: bool = True):
+    def folder_graph(self, path: str, include_files: bool = True, file_limit: int = 180, recursive: bool = True, files_for_path: str | None = None):
         current = self.catalog.conn.execute('SELECT folder_id,path,name,file_count FROM folders WHERE path=?', [path]).fetchone()
         if not current: return {'nodes': [], 'edges': [], 'title': 'Pasta não encontrada'}
         folder_id, folder_path, folder_name, count = current
@@ -115,4 +117,32 @@ class ExplorerService:
             for file_id, filename, file_path, category, directory in files:
                 nodes.append({'id': f'file:{file_id}', 'file_id': file_id, 'label': filename, 'type': 'file', 'path': file_path, 'category': category})
                 edges.append({'source': f'folder:{path_ids.get(directory, folder_id)}', 'target': f'file:{file_id}', 'kind': 'contains'})
+        elif files_for_path and files_for_path in path_ids:
+            direct_files = self.catalog.conn.execute('''SELECT file_id,filename,path,file_category,directory FROM files
+                WHERE directory=? AND deleted=FALSE AND excluded=FALSE ORDER BY filename LIMIT ?''', [files_for_path, file_limit]).fetchall()
+            for file_id, filename, file_path, category, directory in direct_files:
+                nodes.append({'id': f'file:{file_id}', 'file_id': file_id, 'label': filename, 'type': 'file', 'path': file_path, 'category': category})
+                edges.append({'source': f'folder:{path_ids[directory]}', 'target': f'file:{file_id}', 'kind': 'contains'})
         return {'nodes': nodes, 'edges': edges, 'title': folder_path, 'truncated': len(files) >= file_limit}
+
+    def excel_similarity_graph(self):
+        """Liga apenas datasets Excel/CSV que partilham nomes de colunas."""
+        rows = self.catalog.conn.execute('''SELECT f.file_id,f.filename,dc.column_name
+            FROM files f JOIN datasets ds ON ds.file_id=f.file_id
+            JOIN sheets s ON s.dataset_id=ds.dataset_id
+            JOIN dataset_columns dc ON dc.sheet_id=s.sheet_id
+            WHERE f.deleted=FALSE AND f.excluded=FALSE AND f.extension IN ('.xlsx','.xls')''').fetchall()
+        files, by_column = {}, defaultdict(set)
+        for file_id, filename, column_name in rows:
+            files[file_id] = filename
+            normalised = ' '.join(str(column_name).casefold().split())
+            if normalised:
+                by_column[normalised].add(file_id)
+        shared = defaultdict(list)
+        for column, identifiers in by_column.items():
+            for left, right in combinations(sorted(identifiers), 2):
+                shared[(left, right)].append(column)
+        connected = {identifier for pair in shared for identifier in pair}
+        nodes = [{'id': f'excel:{identifier}', 'file_id': identifier, 'label': files[identifier], 'type': 'excel'} for identifier in sorted(connected, key=lambda item: files[item].casefold())]
+        edges = [{'source': f'excel:{left}', 'target': f'excel:{right}', 'kind': 'shared_columns', 'weight': len(columns), 'columns': columns[:6]} for (left, right), columns in shared.items()]
+        return {'nodes': nodes, 'edges': edges, 'title': 'Constelação de Dados', 'isolated_files': len(files) - len(connected)}

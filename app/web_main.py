@@ -209,8 +209,14 @@ class Handler(BaseHTTPRequestHandler):
             (open_local_file if route == "/api/open" else reveal_local_file)(path)
             return self.send_json({"ok": True})
         if route == "/api/graph":
+            include_files = query.get("files", ["1"])[0] != "0"
+            focus = query.get("focus", [None])[0]
             with catalog.lock:
-                data = service.root_graph() if not query.get("path") else service.folder_graph(query["path"][0], query.get("files", ["1"])[0] != "0")
+                data = service.root_graph(include_files, focus) if not query.get("path") else service.folder_graph(query["path"][0], include_files, files_for_path=focus)
+            return self.send_json(data)
+        if route == "/api/excel-graph":
+            with catalog.lock:
+                data = service.excel_similarity_graph()
             return self.send_json(data)
         if route == "/api/progress":
             with progress_lock:

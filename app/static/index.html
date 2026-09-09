@@ -18,7 +18,7 @@
       <nav class="nav">
         <button data-nav="home" class="active">◈ Explorar</button>
         <button data-nav="recent">◷ Recentes</button>
-        <button data-nav="graph">◎ Grafo</button>
+        <button data-nav="graph">◎ Órbitas</button>
         <button data-nav="collections">★ Coleções</button>
       </nav>
       <section class="side-section"><div class="side-heading">PASTAS INDEXADAS <button id="refreshRoots" title="Atualizar">↻</button></div><div id="rootFolders" class="root-folders"></div></section>
@@ -30,7 +30,7 @@
         <div id="viewHeading" class="view-heading"><h1>Explorar</h1><p>Ficheiros indexados recentemente.</p></div>
         <div id="fileList" class="file-list" role="list"></div>
       </section>
-      <section id="graphView" class="view hidden"><div class="toolbar"><button data-nav="home">← Explorar</button><button id="graphRoot">Raiz</button><button id="graphZoomIn">＋</button><button id="graphZoomOut">−</button><button id="graphReset">Reset</button><label><input id="graphFiles" type="checkbox" checked> ficheiros</label></div><div id="graphCanvas" class="graph-canvas"></div></section>
+      <section id="graphView" class="view hidden"><div class="toolbar"><strong id="orbitTitle">◎ Órbitas</strong><button data-nav="home">← Explorar</button><button id="graphRoot">Raiz</button><button id="schemaGraph">⌗ Constelação Excel</button><button id="graphZoomIn">＋</button><button id="graphZoomOut">−</button><button id="graphReset">Reset</button><label title="Oculta todos os ficheiros; clique numa pasta para revelar apenas os ficheiros dela."><input id="graphFiles" type="checkbox"> ocultar ficheiros</label></div><div id="graphCanvas" class="graph-canvas"></div></section>
       <section id="collectionsView" class="view hidden"><div class="toolbar"><button data-nav="home">← Explorar</button><div class="toolbar-spacer"></div><button id="createCollection" class="accent">＋ Coleção</button></div><div id="collectionsList" class="collection-list"></div></section>
     </main>
     <aside id="previewPane" class="preview-pane"><div class="empty-preview"><div>✦</div><h2>Preview</h2><p>Selecione um ficheiro para ver conteúdo, dados e relações sem abrir outra aplicação.</p></div></aside>

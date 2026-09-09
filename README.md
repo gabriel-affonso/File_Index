@@ -10,7 +10,8 @@ O File Index é uma interface local para navegar, pesquisar e pré-visualizar os
 * Tags, relações e coleções sem alterar os ficheiros de origem.
 * Indexação incremental com percentagem, erros visíveis, exclusões configuráveis e deteção de ficheiros removidos.
 * Monitorização opcional das pastas configuradas com `watchdog`.
-* Grafo estrutural com pastas como âncoras e ficheiros como nós físicos.
+* **Órbitas**: mapa estrutural com pastas como âncoras, ficheiros como nós físicos e modo de revelar ficheiros por pasta.
+* **Constelação Excel**: visão que liga exclusivamente ficheiros Excel pelas colunas que partilham.
 
 ## Instalação no Windows
 
