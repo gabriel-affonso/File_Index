@@ -1,22 +1,40 @@
 # Local Knowledge Explorer
 
-Explorador local de conhecimento: indexa ficheiros sem os mover, pesquisar conteúdo e metadados, pré-visualizar documentos/datasets e criar relações manuais. A interface abre localmente no navegador, sem cloud ou servidor externo.
+Explorador local de conhecimento para Windows: indexa ficheiros sem os mover, pesquisa conteúdo e metadados, pré-visualiza documentos/datasets e cria relações manuais. A interface abre localmente no navegador, sem cloud ou servidor externo.
+
+## Instalação no Windows
+
+Pré-requisito: instale o **Python 3.11** e marque a opção “Add Python to PATH” durante a instalação.
+
+Abra o PowerShell na pasta do projeto e instale as dependências uma única vez:
+
+```powershell
+py -3.11 -m pip install --user -r requirements.txt
+```
+
+Não é necessário criar nem ativar um ambiente virtual.
 
 ## Executar
 
-```bash
-python3.11 -m venv .venv311
-.venv311/bin/pip install -r requirements.txt
-.venv311/bin/python -m app.main
+```powershell
+py -3.11 -m app.windows_launcher
 ```
 
-No Windows, substitua `.venv311/bin/python` por `.venv311\\Scripts\\python.exe`.
+A aplicação abre automaticamente no browser. Mantenha a janela do PowerShell aberta enquanto utiliza o programa; pressione `Ctrl+C` para o encerrar.
 
-O browser abre automaticamente. Deixe o Terminal em execução enquanto utiliza a app e pressione `Ctrl+C` para a encerrar.
+## Atalho global
 
-## Windows
+No Windows, `Ctrl + Shift + Espaço` abre a aplicação a partir de qualquer programa enquanto o `windows_launcher` estiver em execução.
 
-No Windows, execute `python -m app.windows_launcher`. O atalho global `Ctrl+Shift+Espaço` abre a app no browser. Para gerar um `.exe`, execute [build-windows.ps1](scripts/build-windows.ps1) num computador Windows.
+## Criar um executável `.exe`
+
+No PowerShell, execute:
+
+```powershell
+.\scripts\build-windows.ps1
+```
+
+O ficheiro gerado ficará na pasta `dist`.
 
 ## Garantias da V1
 
