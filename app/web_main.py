@@ -34,12 +34,47 @@ let graphView={zoom:1,panX:0,panY:0,layer:null,run:0,path:null};function applyGr
 function indexFolder(){let input=document.getElementById('folder');api('/api/index?path='+encodeURIComponent(input.value)).then(x=>{document.getElementById('progressText').textContent=x.message;poll()})}function poll(){api('/api/progress').then(p=>{let pct=p.total?Math.round(100*p.current/p.total):0;document.getElementById('bar').style.width=pct+'%';document.getElementById('progressText').textContent=p.active?`A indexar ${p.current}/${p.total}: ${p.name} (${pct}%)`:p.result;if(p.active)setTimeout(poll,350);else search()})}document.getElementById('query').addEventListener('keydown',e=>e.key==='Enter'&&search());search();
 </script></body></html>'''
 
+# Esta camada é entregue depois da interface base para manter a física do
+# grafo legível e independente das restantes telas. Os ficheiros são pontos
+# leves, mas participam da mesma simulação de forças que as pastas.
+GRAPH_PHYSICS_SCRIPT = r'''<script>
+window.graphPhysics={zoom:1,panX:0,panY:0,layer:null,run:0,path:null};
+function physicsTransform(){let s=window.graphPhysics;if(s.layer)s.layer.style.transform=`translate(${s.panX}px,${s.panY}px) scale(${s.zoom})`}
+window.resetGraphView=function(){let s=window.graphPhysics;s.zoom=1;s.panX=0;s.panY=0;physicsTransform()};
+window.zoomGraph=function(factor){let s=window.graphPhysics,box=document.getElementById('graphbox'),x=box.clientWidth/2,y=box.clientHeight/2,next=Math.max(.3,Math.min(3.5,s.zoom*factor)),ratio=next/s.zoom;s.panX=x-(x-s.panX)*ratio;s.panY=y-(y-s.panY)*ratio;s.zoom=next;physicsTransform()};
+window.openRootGraph=function(){window.graphPhysics.path=null;show('graph');api('/api/root-graph').then(window.renderObsidianGraph)};
+window.openFolderGraph=function(path){let s=window.graphPhysics;s.path=path;show('graph');let files=document.getElementById('showFiles').checked;api('/api/folder-graph?path='+encodeURIComponent(path)+'&files='+(files?'1':'0')+'&recursive=1').then(window.renderObsidianGraph)};
+window.refreshFolderGraph=function(){let s=window.graphPhysics;s.path?window.openFolderGraph(s.path):window.openRootGraph()};
+window.renderObsidianGraph=function(data){
+  const box=document.getElementById('graphbox'),title=document.getElementById('graphTitle'),s=window.graphPhysics,run=++s.run,w=box.clientWidth,h=box.clientHeight;
+  title.textContent=data.title||'Grafo estrutural';box.innerHTML='';window.resetGraphView();
+  const layer=document.createElement('div');layer.className='graph-layer';box.append(layer);s.layer=layer;
+  if(!data.nodes.length){layer.innerHTML='<p class="muted" style="padding:24px">Nenhuma pasta indexada neste nível.</p>';return}
+  const nodes=data.nodes.map(n=>({...n,x:0,y:0,homeX:0,homeY:0,vx:0,vy:0,fixed:false})),byId=new Map(nodes.map(n=>[n.id,n])),children=new Map(),parent=new Map();
+  data.edges.forEach(e=>{parent.set(e.target,e.source);if(!children.has(e.source))children.set(e.source,[]);children.get(e.source).push(e.target)});
+  const center=nodes.find(n=>n.center||n.type==='workspace')||nodes[0];center.x=center.homeX=w/2;center.y=center.homeY=h/2;center.fixed=true;
+  function seed(parentId,depth,start,span){const anchor=byId.get(parentId),kids=children.get(parentId)||[],folders=kids.filter(id=>byId.get(id).type!=='file'),files=kids.filter(id=>byId.get(id).type==='file'),ordered=[...folders,...files];ordered.forEach((id,index)=>{const n=byId.get(id),a=start+span*(index+.5)/Math.max(1,ordered.length),r=n.type==='file'?78+Math.min(95,Math.floor(index/7)*14):(depth===0?245:145);n.x=n.homeX=anchor.homeX+Math.cos(a)*r;n.y=n.homeY=anchor.homeY+Math.sin(a)*r;if(n.type!=='file')seed(id,depth+1,a-.78,1.56)})}
+  seed(center.id,0,-Math.PI,Math.PI*2);
+  const elements=new Map(),lines=data.edges.map(e=>{const el=document.createElement('i');el.className='edge '+(byId.get(e.target)?.type==='folder'?'folder-edge':'');layer.append(el);return {e,el}});let selected=null;
+  function select(n){if(selected)elements.get(selected.id)?.classList.remove('selected');selected=n;elements.get(n.id)?.classList.add('selected');document.getElementById('graphHint').textContent=n.type==='folder'?`${n.label}: ${n.count||0} ficheiros. Clique para navegar.`:`${n.label}. Arraste-o para alterar a simulação; duplo clique para abrir.`}
+  nodes.forEach(n=>{const el=document.createElement('div');el.className='node '+n.type;el.textContent=n.type==='folder'?'📁 '+n.label:n.type==='workspace'?'✦ '+n.label:n.label;el.title=n.label;layer.append(el);let drag=false,moved=false,x0=0,y0=0;el.onpointerdown=e=>{drag=true;moved=false;x0=e.clientX;y0=e.clientY;el.setPointerCapture?.(e.pointerId);e.stopPropagation()};el.onpointermove=e=>{if(!drag)return;moved||=(Math.hypot(e.clientX-x0,e.clientY-y0)>3);const r=box.getBoundingClientRect();n.x=(e.clientX-r.left-s.panX)/s.zoom;n.y=(e.clientY-r.top-s.panY)/s.zoom;n.homeX=n.x;n.homeY=n.y;n.vx=n.vy=0;n.fixed=true};el.onpointerup=()=>drag=false;el.onclick=e=>{e.stopPropagation();if(moved)return;if(n.type==='folder'&&n!==center)window.openFolderGraph(n.path);else select(n)};el.ondblclick=()=>{if(n.type==='file')openFile(n.file_id)};elements.set(n.id,el)});
+  let panning=false,px=0,py=0;box.onpointerdown=e=>{if(e.target===box||e.target===layer){panning=true;px=e.clientX;py=e.clientY;box.setPointerCapture?.(e.pointerId)}};box.onpointermove=e=>{if(!panning)return;s.panX+=e.clientX-px;s.panY+=e.clientY-py;px=e.clientX;py=e.clientY;physicsTransform()};box.onpointerup=()=>panning=false;
+  box.onwheel=e=>{e.preventDefault();const r=box.getBoundingClientRect(),x=e.clientX-r.left,y=e.clientY-r.top,next=Math.max(.3,Math.min(3.5,s.zoom*(e.deltaY<0?1.12:.89))),ratio=next/s.zoom;s.panX=x-(x-s.panX)*ratio;s.panY=y-(y-s.panY)*ratio;s.zoom=next;physicsTransform()},{passive:false};
+  function draw(){nodes.forEach(n=>{const el=elements.get(n.id);el.style.left=n.x+'px';el.style.top=n.y+'px'});lines.forEach(({e,el})=>{const a=byId.get(e.source),b=byId.get(e.target),dx=b.x-a.x,dy=b.y-a.y;el.style.left=a.x+'px';el.style.top=a.y+'px';el.style.width=Math.hypot(dx,dy)+'px';el.style.transform=`rotate(${Math.atan2(dy,dx)}rad)`})}
+  function tick(now){if(run!==s.run)return;for(let i=0;i<nodes.length;i++)for(let j=i+1;j<nodes.length;j++){const a=nodes[i],b=nodes[j],dx=a.x-b.x,dy=a.y-b.y,d=Math.max(18,Math.hypot(dx,dy)),strength=(a.type==='file'&&b.type==='file'?650:1650)/(d*d);if(!a.fixed){a.vx+=dx/d*strength;a.vy+=dy/d*strength}if(!b.fixed){b.vx-=dx/d*strength;b.vy-=dy/d*strength}}lines.forEach(({e})=>{const a=byId.get(e.source),b=byId.get(e.target),dx=b.x-a.x,dy=b.y-a.y,d=Math.max(1,Math.hypot(dx,dy)),ideal=b.type==='file'?94:165,pull=(d-ideal)*.007;if(!a.fixed){a.vx+=dx/d*pull;a.vy+=dy/d*pull}if(!b.fixed){b.vx-=dx/d*pull;b.vy-=dy/d*pull}});nodes.forEach((n,i)=>{if(n.fixed)return;n.vx+=(n.homeX-n.x)*.002;n.vy+=(n.homeY-n.y)*.002;n.vx+=Math.sin(now*.001+i*2.17)*.012;n.vy+=Math.cos(now*.0012+i*1.31)*.012;n.vx*=.91;n.vy*=.91;n.x+=n.vx;n.y+=n.vy});draw();requestAnimationFrame(tick)}
+  draw();requestAnimationFrame(tick);if(data.truncated){const hint=document.createElement('p');hint.className='muted';hint.style.cssText='position:absolute;left:16px;bottom:8px';hint.textContent='Mostrando os primeiros 180 ficheiros desta pasta.';layer.append(hint)}
+};
+</script>'''
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self,*args): pass
     def send_json(self, value):
         data=json.dumps(value,default=str).encode();self.send_response(200);self.send_header('Content-Type','application/json');self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data)
     def do_GET(self):
         parsed=urlparse(self.path); q=parse_qs(parsed.query)
+        if parsed.path=='/':
+            html = PAGE.replace('</body>', GRAPH_PHYSICS_SCRIPT + '</body>')
+            self.send_response(200);self.send_header('Content-Type','text/html;charset=utf-8');self.send_header('Cache-Control','no-store, max-age=0');self.end_headers();self.wfile.write(html.encode());return
         if parsed.path=='/': self.send_response(200);self.send_header('Content-Type','text/html;charset=utf-8');self.send_header('Cache-Control','no-store, max-age=0');self.end_headers();self.wfile.write(PAGE.encode());return
         if parsed.path=='/api/search':
             with catalog.lock:
