@@ -5,6 +5,7 @@ import ctypes.wintypes
 import os
 import sys
 import threading
+import time
 import traceback
 import webbrowser
 from pathlib import Path
@@ -13,6 +14,8 @@ MOD_CONTROL = 0x0002
 MOD_SHIFT = 0x0004
 VK_SPACE = 0x20
 WM_HOTKEY = 0x0312
+WM_QUIT = 0x0012
+PM_REMOVE = 0x0001
 HOTKEY_ID = 1
 
 def main():
@@ -30,10 +33,20 @@ def main():
         print('Não foi possível registar Ctrl+Shift+Espaço; a aplicação continua disponível no browser.')
     message = ctypes.wintypes.MSG()
     try:
-        while user32.GetMessageW(ctypes.byref(message), None, 0, 0) != 0:
-            if message.message == WM_HOTKEY and message.wParam == HOTKEY_ID:
-                webbrowser.open(url)
-            user32.TranslateMessage(ctypes.byref(message));user32.DispatchMessageW(ctypes.byref(message))
+        # GetMessageW bloqueia dentro de uma chamada nativa e pode atrasar o
+        # KeyboardInterrupt. PeekMessageW devolve regularmente o controlo ao
+        # Python, portanto Ctrl+C volta a encerrar o anfitrião e o servidor.
+        running = True
+        while running:
+            while user32.PeekMessageW(ctypes.byref(message), None, 0, 0, PM_REMOVE):
+                if message.message == WM_QUIT:
+                    running = False
+                    break
+                if message.message == WM_HOTKEY and message.wParam == HOTKEY_ID:
+                    webbrowser.open(url)
+                user32.TranslateMessage(ctypes.byref(message))
+                user32.DispatchMessageW(ctypes.byref(message))
+            time.sleep(0.05)
     finally:
         user32.UnregisterHotKey(None, HOTKEY_ID)
         server.shutdown()
