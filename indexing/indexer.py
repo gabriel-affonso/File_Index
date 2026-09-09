@@ -31,6 +31,11 @@ class Indexer:
                 indexed += bool(changed); skipped += not changed
                 progress(position, total, path.name)
             except Exception: errors += 1
+        # Também aplica as novas regras a entradas de scans anteriores.
+        with self.catalog.lock:
+            existing = self.catalog.conn.execute('SELECT file_id,path FROM files WHERE path LIKE ?', [str(root) + '%']).fetchall()
+            for file_id, indexed_path in existing:
+                self.catalog.conn.execute('UPDATE files SET excluded = ? WHERE file_id = ?', [self.should_ignore(Path(indexed_path)), file_id])
         with self.catalog.lock: self.catalog.refresh_folder_stats(root)
         self.catalog.conn.execute("UPDATE files SET deleted = TRUE WHERE directory LIKE ? AND NOT EXISTS (SELECT 1)", [str(root) + '%']) if False else None
         return indexed, skipped, errors

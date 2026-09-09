@@ -61,7 +61,7 @@ class Catalog:
     def refresh_folder_stats(self, root: Path):
         root_text = str(root.resolve())
         self.conn.execute('''UPDATE folders AS fo SET file_count = coalesce(stats.file_count, 0), total_bytes = coalesce(stats.total_bytes, 0), indexed_at = current_timestamp
-            FROM (SELECT directory, count(*) AS file_count, sum(size_bytes) AS total_bytes FROM files WHERE deleted = FALSE GROUP BY directory) stats
+            FROM (SELECT directory, count(*) AS file_count, sum(size_bytes) AS total_bytes FROM files WHERE deleted = FALSE AND excluded = FALSE GROUP BY directory) stats
             WHERE fo.path = stats.directory AND fo.path LIKE ?''', [root_text + '%'])
 
     def clear_extraction(self, file_id: str):

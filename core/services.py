@@ -7,7 +7,7 @@ class ExplorerService:
         q = f'%{query.lower()}%'; condition = '' if not category else ' AND f.file_category = ?'; params = [q] * 8 + ([category] if category else [])
         return self.catalog.conn.execute(f'''SELECT DISTINCT f.file_id, f.filename, f.path, f.extension, f.file_category, f.size_bytes,
           CASE WHEN lower(f.filename) LIKE ? THEN 100 WHEN lower(f.directory) LIKE ? THEN 50 WHEN lower(coalesce(d.text_content,'')) LIKE ? THEN 20 WHEN EXISTS (SELECT 1 FROM dataset_columns dc JOIN sheets s ON s.sheet_id=dc.sheet_id JOIN datasets ds ON ds.dataset_id=s.dataset_id WHERE ds.file_id=f.file_id AND lower(dc.column_name) LIKE ?) THEN 70 ELSE 0 END score
-          FROM files f LEFT JOIN document_content d ON d.file_id=f.file_id WHERE f.deleted=FALSE AND (lower(f.filename) LIKE ? OR lower(f.directory) LIKE ? OR lower(coalesce(d.text_content,'')) LIKE ? OR EXISTS (SELECT 1 FROM dataset_columns dc JOIN sheets s ON s.sheet_id=dc.sheet_id JOIN datasets ds ON ds.dataset_id=s.dataset_id WHERE ds.file_id=f.file_id AND lower(dc.column_name) LIKE ?)){condition} ORDER BY score DESC, f.filename''', params).fetchall()
+          FROM files f LEFT JOIN document_content d ON d.file_id=f.file_id WHERE f.deleted=FALSE AND f.excluded=FALSE AND (lower(f.filename) LIKE ? OR lower(f.directory) LIKE ? OR lower(coalesce(d.text_content,'')) LIKE ? OR EXISTS (SELECT 1 FROM dataset_columns dc JOIN sheets s ON s.sheet_id=dc.sheet_id JOIN datasets ds ON ds.dataset_id=s.dataset_id WHERE ds.file_id=f.file_id AND lower(dc.column_name) LIKE ?)){condition} ORDER BY score DESC, f.filename''', params).fetchall()
     def details(self, file_id):
         return self.catalog.conn.execute('SELECT f.*, d.text_content, d.page_count FROM files f LEFT JOIN document_content d ON f.file_id=d.file_id WHERE f.file_id=?', [file_id]).fetchone()
     def detail_record(self, file_id):
@@ -46,10 +46,13 @@ class ExplorerService:
         return self.catalog.conn.execute('''SELECT ci.object_type,ci.object_id,coalesce(f.filename,r.label,ci.object_id) AS object_label FROM collection_items ci LEFT JOIN files f ON f.file_id=ci.object_id LEFT JOIN resources r ON r.resource_id=ci.object_id WHERE ci.collection_id=? ORDER BY object_label''',[collection_id]).fetchall()
     def remove_from_collection(self, collection_id, object_type, object_id): self.catalog.conn.execute('DELETE FROM collection_items WHERE collection_id=? AND object_type=? AND object_id=?',[collection_id,object_type,object_id])
     def folder_roots(self):
-        return self.catalog.conn.execute("SELECT folder_id,path,name,file_count,total_bytes FROM folders WHERE parent_path IS NULL OR parent_path NOT IN (SELECT path FROM folders) ORDER BY name").fetchall()
+        return self.catalog.conn.execute("""SELECT folder_id,path,name,file_count,total_bytes FROM folders fo
+            WHERE EXISTS (SELECT 1 FROM files f WHERE f.directory LIKE fo.path || '%' AND f.deleted=FALSE AND f.excluded=FALSE)
+            AND (parent_path IS NULL OR parent_path NOT IN (SELECT path FROM folders)) ORDER BY name""").fetchall()
     def folder_children(self, path):
-        folders = self.catalog.conn.execute('SELECT folder_id,path,name,file_count,total_bytes FROM folders WHERE parent_path = ? ORDER BY name', [path]).fetchall()
-        files = self.catalog.conn.execute('SELECT file_id,filename,path,file_category,size_bytes FROM files WHERE directory = ? AND deleted = FALSE ORDER BY filename', [path]).fetchall()
+        folders = self.catalog.conn.execute('''SELECT folder_id,path,name,file_count,total_bytes FROM folders fo WHERE parent_path = ?
+            AND EXISTS (SELECT 1 FROM files f WHERE f.directory LIKE fo.path || '%' AND f.deleted=FALSE AND f.excluded=FALSE) ORDER BY name''', [path]).fetchall()
+        files = self.catalog.conn.execute('SELECT file_id,filename,path,file_category,size_bytes FROM files WHERE directory = ? AND deleted = FALSE AND excluded=FALSE ORDER BY filename', [path]).fetchall()
         return folders, files
     def structure_graph(self, include_folders: bool = True, file_limit: int = 350):
         """Grafo estrutural: pastas como âncoras, ficheiros como satélites."""
@@ -61,7 +64,7 @@ class ExplorerService:
                 nodes.append({'id': f'folder:{folder_id}', 'label': name, 'type': 'folder', 'count': count or 0})
                 if parent_path in folder_by_path:
                     edges.append({'source': f'folder:{folder_by_path[parent_path]}', 'target': f'folder:{folder_id}', 'kind': 'contains'})
-        files = self.catalog.conn.execute('SELECT file_id,filename,directory,file_category FROM files WHERE deleted = FALSE ORDER BY filename LIMIT ?', [file_limit]).fetchall()
+        files = self.catalog.conn.execute('SELECT file_id,filename,directory,file_category FROM files WHERE deleted = FALSE AND excluded=FALSE ORDER BY filename LIMIT ?', [file_limit]).fetchall()
         for file_id, filename, directory, file_category in files:
             nodes.append({'id': f'file:{file_id}', 'label': filename, 'type': 'file', 'category': file_category})
             if include_folders and directory in folder_by_path:
