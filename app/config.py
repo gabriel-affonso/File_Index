@@ -1,16 +1,24 @@
+import os
+import sys
 from pathlib import Path
 from dataclasses import dataclass, field
 import tomllib
 
 APP_ROOT = Path(__file__).resolve().parents[1]
-DATA_DIR = APP_ROOT / "data"
+
+# O executável PyInstaller é extraído numa pasta temporária e apagado ao sair.
+# Catálogo e configuração devem viver no perfil do utilizador, não ali.
+if getattr(sys, 'frozen', False):
+    DATA_DIR = Path(os.environ.get('LOCALAPPDATA', Path.home() / 'AppData' / 'Local')) / 'LocalKnowledgeExplorer'
+else:
+    DATA_DIR = APP_ROOT / "data"
 CACHE_DIR = DATA_DIR / "cache"
 DATABASE_PATH = DATA_DIR / "catalog.duckdb"
 
 SUPPORTED_EXTENSIONS = {".pdf", ".xlsx", ".xls", ".csv", ".docx", ".txt", ".md", ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"}
 IGNORED_NAMES = {".git", "node_modules", "__pycache__", "cache"}
 IGNORED_PREFIXES = ("~$",)
-CONFIG_PATH = APP_ROOT / "config.toml"
+CONFIG_PATH = DATA_DIR / "config.toml" if getattr(sys, 'frozen', False) else APP_ROOT / "config.toml"
 
 @dataclass
 class Settings:
@@ -27,4 +35,5 @@ class Settings:
 
     def save(self):
         def values(items): return ', '.join('"' + x.replace('"', '\\"') + '"' for x in items)
-        CONFIG_PATH.write_text('[database]\npath = "./data/catalog.duckdb"\n\n[indexing]\n' + f'directories = [{values(self.directories)}]\n' + f'extensions = [{values(self.extensions)}]\n' + f'ignored_patterns = [{values(self.ignored_patterns)}]\n')
+        CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        CONFIG_PATH.write_text('[database]\n' + f'path = "{DATABASE_PATH.as_posix()}"\n\n[indexing]\n' + f'directories = [{values(self.directories)}]\n' + f'extensions = [{values(self.extensions)}]\n' + f'ignored_patterns = [{values(self.ignored_patterns)}]\n')

@@ -45,3 +45,19 @@ class ExplorerService:
         folders = self.catalog.conn.execute('SELECT folder_id,path,name,file_count,total_bytes FROM folders WHERE parent_path = ? ORDER BY name', [path]).fetchall()
         files = self.catalog.conn.execute('SELECT file_id,filename,path,file_category,size_bytes FROM files WHERE directory = ? AND deleted = FALSE ORDER BY filename', [path]).fetchall()
         return folders, files
+    def structure_graph(self, include_folders: bool = True, file_limit: int = 350):
+        """Grafo estrutural: pastas como âncoras, ficheiros como satélites."""
+        nodes, edges = [], []
+        folders = self.catalog.conn.execute('SELECT folder_id,path,parent_path,name,file_count FROM folders ORDER BY depth,path').fetchall()
+        folder_by_path = {row[1]: row[0] for row in folders}
+        if include_folders:
+            for folder_id, path, parent_path, name, count in folders:
+                nodes.append({'id': f'folder:{folder_id}', 'label': name, 'type': 'folder', 'count': count or 0})
+                if parent_path in folder_by_path:
+                    edges.append({'source': f'folder:{folder_by_path[parent_path]}', 'target': f'folder:{folder_id}', 'kind': 'contains'})
+        files = self.catalog.conn.execute('SELECT file_id,filename,directory,file_category FROM files WHERE deleted = FALSE ORDER BY filename LIMIT ?', [file_limit]).fetchall()
+        for file_id, filename, directory, file_category in files:
+            nodes.append({'id': f'file:{file_id}', 'label': filename, 'type': 'file', 'category': file_category})
+            if include_folders and directory in folder_by_path:
+                edges.append({'source': f'folder:{folder_by_path[directory]}', 'target': f'file:{file_id}', 'kind': 'contains'})
+        return {'nodes': nodes, 'edges': edges, 'truncated': len(files) == file_limit}
