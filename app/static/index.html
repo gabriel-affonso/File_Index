@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="pt-PT">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>File Index V2</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <button class="brand" data-nav="home">✦ <span>FILE INDEX</span><small>V2</small></button>
+    <div class="search-wrap"><span>⌕</span><input id="searchInput" autocomplete="off" placeholder="Pesquisar ficheiros, texto, pastas e colunas…"><kbd>Ctrl K</kbd></div>
+    <select id="typeFilter" aria-label="Tipo"><option value="">Todos</option><option value="document">Documentos</option><option value="spreadsheet">Excel</option><option value="dataset">CSV</option><option value="image">Imagens</option></select>
+    <button id="indexButton" class="accent">＋ Indexar</button>
+  </header>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <nav class="nav">
+        <button data-nav="home" class="active">◈ Explorar</button>
+        <button data-nav="recent">◷ Recentes</button>
+        <button data-nav="graph">◎ Grafo</button>
+        <button data-nav="collections">★ Coleções</button>
+      </nav>
+      <section class="side-section"><div class="side-heading">PASTAS INDEXADAS <button id="refreshRoots" title="Atualizar">↻</button></div><div id="rootFolders" class="root-folders"></div></section>
+      <section class="side-section bottom"><button id="settingsButton">⚙ Configuração</button><div id="statusLine" class="status-line">A iniciar…</div></section>
+    </aside>
+    <main class="workspace">
+      <section id="explorerView" class="view">
+        <div class="toolbar"><button id="backButton" title="Voltar">←</button><button id="upButton" title="Subir">↑</button><div id="breadcrumbs" class="breadcrumbs">Explorar</div><div class="toolbar-spacer"></div><button id="listMode" class="active">☷ Lista</button><button id="gridMode">▦ Grelha</button></div>
+        <div id="viewHeading" class="view-heading"><h1>Explorar</h1><p>Ficheiros indexados recentemente.</p></div>
+        <div id="fileList" class="file-list" role="list"></div>
+      </section>
+      <section id="graphView" class="view hidden"><div class="toolbar"><button data-nav="home">← Explorar</button><button id="graphRoot">Raiz</button><button id="graphZoomIn">＋</button><button id="graphZoomOut">−</button><button id="graphReset">Reset</button><label><input id="graphFiles" type="checkbox" checked> ficheiros</label></div><div id="graphCanvas" class="graph-canvas"></div></section>
+      <section id="collectionsView" class="view hidden"><div class="toolbar"><button data-nav="home">← Explorar</button><div class="toolbar-spacer"></div><button id="createCollection" class="accent">＋ Coleção</button></div><div id="collectionsList" class="collection-list"></div></section>
+    </main>
+    <aside id="previewPane" class="preview-pane"><div class="empty-preview"><div>✦</div><h2>Preview</h2><p>Selecione um ficheiro para ver conteúdo, dados e relações sem abrir outra aplicação.</p></div></aside>
+  </div>
+  <dialog id="settingsDialog"><form method="dialog" class="dialog-card"><div class="dialog-title"><h2>Configuração</h2><button value="cancel">×</button></div><label>Pastas, uma por linha<textarea id="settingsDirectories" rows="6"></textarea></label><label>Padrões a ignorar, um por linha<textarea id="settingsIgnored" rows="5"></textarea></label><label class="toggle"><input id="settingsWatch" type="checkbox"> Monitorar alterações automaticamente</label><div class="dialog-actions"><button value="cancel">Cancelar</button><button id="saveSettings" value="default" class="accent">Guardar</button></div></form></dialog>
+  <dialog id="indexDialog"><form method="dialog" class="dialog-card"><div class="dialog-title"><h2>Indexar pasta</h2><button value="cancel">×</button></div><p>O File Index lê e cataloga. Nunca move, renomeia ou edita os originais.</p><label>Caminho da pasta<input id="indexPath" placeholder="C:\\Users\\…\\Documentos"></label><div class="dialog-actions"><button value="cancel">Cancelar</button><button id="startIndex" value="default" class="accent">Iniciar</button></div></form></dialog>
+  <div id="toast" class="toast hidden"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

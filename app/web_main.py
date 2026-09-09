@@ -1,138 +1,298 @@
-"""Interface local sem dependência de Qt: abre no browser em localhost."""
+"""Servidor local e API da interface V2 do Local Knowledge Explorer."""
 from __future__ import annotations
-import json, os, subprocess, sys, threading, webbrowser
+
+import json
+import mimetypes
+import os
+import subprocess
+import sys
+import threading
+import webbrowser
+from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
-from database.duckdb import Catalog
+
+from app.config import Settings
 from core.services import ExplorerService
+from database.duckdb import Catalog
 from indexing.indexer import Indexer
+from indexing.watcher import IndexWatcher
 
-BUILD_ID = 'graph-radial-4d8643d'
-catalog = Catalog(); service = ExplorerService(catalog)
-progress = {'active': False, 'current': 0, 'total': 0, 'name': '', 'result': ''}
+BUILD_ID = "2.0.0"
+STATIC_DIR = Path(__file__).with_name("static")
+catalog = Catalog()
+service = ExplorerService(catalog)
+progress_lock = threading.Lock()
+progress = {"active": False, "current": 0, "total": 0, "name": "", "result": "", "errors": []}
+watcher = IndexWatcher(catalog)
 
-def open_local_file(path: str):
-    """Abre apenas caminhos já existentes no catálogo local."""
-    if sys.platform.startswith('win'): os.startfile(path)  # noqa: S606
-    elif sys.platform == 'darwin': subprocess.Popen(['open', path])
-    else: subprocess.Popen(['xdg-open', path])
 
-PAGE = r'''<!doctype html><html><head><meta charset="utf-8"><title>Local Knowledge Explorer</title><style>
-*{box-sizing:border-box}body{margin:0;background:#000;color:#dce9f5;font:14px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}header{height:62px;border-bottom:1px solid #17344b;display:flex;align-items:center;padding:0 24px;gap:16px;background:#000}h1{font-size:17px;letter-spacing:.5px;color:#dffaff;margin:0}input,button,select{background:#07111f;color:#dffaff;border:1px solid #1c3c58;border-radius:7px;padding:9px 12px}input{min-width:300px;flex:1}button:hover{border-color:#67e8f9;background:#0b2036;cursor:pointer}.shell{display:grid;grid-template-columns:190px 1fr;height:calc(100vh - 62px)}nav{border-right:1px solid #17344b;padding:18px 10px;background:#000}nav button{display:block;width:100%;text-align:left;border:0;background:transparent;color:#8eabc0;margin:3px 0}.content{padding:22px;overflow:auto}.grid{display:grid;grid-template-columns:55% 45%;height:calc(100vh - 130px);border:1px solid #17344b;border-radius:10px;overflow:hidden}.results{overflow:auto;border-right:1px solid #17344b}.row{padding:13px 16px;border-bottom:1px solid #10263a;cursor:pointer}.row:hover,.row.active{background:#0e3854}.muted{color:#7193aa;font-size:12px;margin-top:5px}.detail{padding:20px;overflow:auto;background:#02070c}.detail h2{margin-top:0;color:#dffaff}.chip{display:inline-block;border:1px solid #2c7da0;border-radius:13px;padding:3px 8px;color:#89e7ff;margin:3px}.progress{height:7px;background:#07111f;border-radius:4px;overflow:hidden}.progress i{display:block;height:100%;background:#42d9ff;transition:width .2s}.hidden{display:none}pre{white-space:pre-wrap;line-height:1.45;color:#c1d7e6}.graph{height:560px;border:1px solid #17344b;border-radius:10px;background:radial-gradient(circle at 50% 50%,#06111e,#000 70%);position:relative;overflow:hidden;cursor:grab}.graph-layer{position:absolute;inset:0;transform-origin:0 0}.node{position:absolute;transform:translate(-50%,-50%);padding:8px 11px;border:1px solid #67e8f9;border-radius:15px;background:#060b14;color:#f1fbff;box-shadow:0 0 18px #167c9b66;cursor:grab;max-width:160px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.node.selected{border-color:#f8fafc!important;box-shadow:0 0 35px #f8fafc99}.node.folder{padding:13px 18px;border:2px solid #a78bfa;border-radius:21px;background:#110d22;box-shadow:0 0 28px #7c3aed88;font-weight:650}.node.workspace{padding:18px 24px;border:2px solid #67e8f9;background:#061927;box-shadow:0 0 32px #0ea5e9aa;font-weight:700}.node.file{width:10px;height:10px;padding:0;border:0;border-radius:999px;background:#55c9ed;box-shadow:0 0 10px #22d3eeaa;color:transparent;overflow:visible}.node.file:hover,.node.file.selected{width:auto;height:auto;min-width:10px;padding:7px 10px;border:1px solid #67e8f9;border-radius:14px;background:#061522;color:#e9fbff;z-index:5;max-width:220px}.edge{position:absolute;height:1px;background:#31516f;opacity:.72;transform-origin:0 0;pointer-events:none}.edge.folder-edge{height:2px;background:#7757bb}.graph-tools{display:flex;gap:12px;align-items:center;margin:10px 0;flex-wrap:wrap}.tabs{display:flex;gap:8px;margin-bottom:18px}
-</style></head><body><header><h1>✦ LOCAL KNOWLEDGE EXPLORER</h1><input id="query" placeholder="Pesquisar ficheiros, conteúdo, pastas e colunas…"><button onclick="search()">Pesquisar</button></header><div class="shell"><nav><button onclick="show('search')">⌕ Pesquisa</button><button onclick="show('folders');loadRoots()">▱ Pastas</button><button onclick="openRootGraph()">◎ Grafo</button><button onclick="show('index')">◌ Indexação</button><button onclick="show('collections')">★ Coleções</button><p class="muted" style="padding:12px">Atalho Windows<br><b>Ctrl + Shift + Espaço</b></p></nav><main class="content"><section id="search"><div class="grid"><div class="results" id="results"></div><div class="detail" id="detail">Selecione um resultado para abrir o preview.</div></div></section><section id="folders" class="hidden"><h2>Índice de duas camadas</h2><p class="muted">Pastas primeiro. Dentro delas, ficheiros e datasets indexados.</p><div class="grid"><div class="results" id="folderTree"></div><div class="detail" id="folderDetail">Escolha uma pasta.</div></div></section><section id="graph" class="hidden"><h2 id="graphTitle">Grafo estrutural</h2><div class="graph-tools"><button onclick="openRootGraph()">← Raiz</button><button onclick="zoomGraph(1.25)">＋</button><button onclick="zoomGraph(.8)">−</button><button onclick="resetGraphView()">Reset</button><label class="muted"><input id="showFiles" type="checkbox" checked onchange="refreshFolderGraph()"> Mostrar ficheiros</label><span id="graphHint" class="muted">Clique para selecionar; duplo clique numa pasta para expandir ou num ficheiro para abrir.</span></div><div id="graphbox" class="graph"></div></section><section id="index" class="hidden"><h2>Indexar uma pasta</h2><p class="muted">Os ficheiros originais nunca são movidos ou alterados.</p><input id="folder" placeholder="C:\\Users\\...\\Documentos"><button onclick="indexFolder()">Iniciar indexação</button><p id="progressText" class="muted"></p><div class="progress"><i id="bar" style="width:0%"></i></div></section><section id="collections" class="hidden"><h2>Coleções</h2><p class="muted">As coleções e relações continuam disponíveis no catálogo local. A gestão avançada será ligada nesta interface no próximo step.</p></section></main></div><script>
-let selected=null;function api(path,opt){return fetch(path,opt).then(r=>r.json())}function show(id){document.querySelectorAll('main section').forEach(x=>x.classList.add('hidden'));document.getElementById(id).classList.remove('hidden')}function esc(s){return String(s).replace(/[&<>]/g,x=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[x]))}
-function search(){let queryInput=document.getElementById('query'),resultBox=document.getElementById('results');api('/api/search?q='+encodeURIComponent(queryInput.value)).then(rows=>{resultBox.innerHTML=rows.length?rows.map(r=>`<div class="row" onclick="details('${r.id}')"><b>${esc(r.name)}</b><div class="muted">${esc(r.kind)} · ${esc(r.path)}</div></div>`).join(''):'<div class="row">Sem resultados.</div>'})}
-function openFile(id){api('/api/open?id='+encodeURIComponent(id)).then(x=>{if(!x.ok)alert(x.error||'Não foi possível abrir o ficheiro.')})}function details(id){selected=id;api('/api/details?id='+id).then(x=>{document.getElementById('detail').innerHTML=`<h2>${esc(x.name)}</h2><p class="muted">${esc(x.kind)} · ${esc(x.path)}</p><button onclick="openFile('${id}')">Abrir ficheiro</button> <button onclick="openGraph()">Relações</button><h3>Preview</h3><pre>${esc(x.text||x.dataset||'Preview indisponível')}</pre><h3>Tags</h3>${(x.tags||[]).map(t=>'<span class="chip">#'+esc(t)+'</span>').join('')||'—'}<h3>Relações</h3>${(x.relations||[]).map(r=>'<span class="chip">→ '+esc(r[1])+'</span>').join('')||'—'}`})}
-function loadRoots(){let tree=document.getElementById('folderTree');api('/api/folders').then(rows=>tree.innerHTML=rows.map(x=>`<div class="row" onclick="openFolder('${encodeURIComponent(x.path)}')">📁 <b>${esc(x.name)}</b><div class="muted">${x.files} ficheiros · ${Math.round(x.bytes/1024/1024)} MB</div></div>`).join('')||'<div class="row">Ainda não existem pastas indexadas.</div>')}
-function openFolder(encoded){let path=decodeURIComponent(encoded),pane=document.getElementById('folderDetail');api('/api/folder?path='+encoded).then(x=>{pane.innerHTML=`<h2>${esc(x.path)}</h2><h3>Pastas</h3>${x.folders.map(f=>`<div class="row" onclick="openFolder('${encodeURIComponent(f.path)}')">📁 ${esc(f.name)} <span class="muted">${f.files} itens</span></div>`).join('')||'—'}<h3>Itens nesta pasta</h3>${x.files.map(f=>`<div class="row" onclick="details('${f.id}');show('search')">${f.kind==='spreadsheet'?'📊':'📄'} ${esc(f.name)}<div class="muted">${f.kind}</div></div>`).join('')||'—'}`})}
-function openGraph(){show('graph');let box=document.getElementById('graphbox');if(!selected){box.innerHTML='<p class="muted" style="padding:24px">Escolha primeiro um ficheiro na Pesquisa e clique em “Mostrar no grafo”.</p>';return}api('/api/graph?id='+selected).then(edges=>{box.innerHTML='';let nodes=[{label:'Selecionado',x:box.clientWidth/2,y:box.clientHeight/2,fixed:true}];edges.forEach((e,i)=>{let a=Math.PI*2*i/Math.max(edges.length,1);nodes.push({label:e[7],x:box.clientWidth/2+190*Math.cos(a),y:box.clientHeight/2+140*Math.sin(a)})});let lines=edges.map(()=>{let l=document.createElement('i');l.className='edge';box.append(l);return l});let els=nodes.map(n=>{let el=document.createElement('div');el.className='node';el.textContent=n.label;box.append(el);let drag=false;el.onpointerdown=e=>{drag=true;if(el.setPointerCapture)el.setPointerCapture(e.pointerId)};el.onpointermove=e=>{if(drag){let r=box.getBoundingClientRect();n.x=e.clientX-r.left;n.y=e.clientY-r.top}};el.onpointerup=()=>drag=false;return el});if(edges.length===0){let hint=document.createElement('p');hint.className='muted';hint.style.cssText='position:absolute;top:16px;left:16px';hint.textContent='Este ficheiro ainda não tem relações. O nó permanece visível; crie uma relação ou indexe conteúdo com um POC.';box.append(hint)}function tick(){for(let i=1;i<nodes.length;i++){let n=nodes[i],cx=nodes[0];let dx=cx.x-n.x,dy=cx.y-n.y,d=Math.max(1,Math.hypot(dx,dy));n.x+=dx*(d-210)*.004;n.y+=dy*(d-210)*.004;for(let j=1;j<nodes.length;j++)if(i!==j){let o=nodes[j],rx=n.x-o.x,ry=n.y-o.y,rd=Math.max(30,Math.hypot(rx,ry));n.x+=rx*1500/(rd*rd*rd);n.y+=ry*1500/(rd*rd*rd)}}nodes.forEach((n,i)=>{n.x=Math.max(65,Math.min(box.clientWidth-65,n.x));n.y=Math.max(45,Math.min(box.clientHeight-45,n.y));els[i].style.left=n.x+'px';els[i].style.top=n.y+'px';if(i){let c=nodes[0],dx=n.x-c.x,dy=n.y-c.y;lines[i-1].style.left=c.x+'px';lines[i-1].style.top=c.y+'px';lines[i-1].style.width=Math.hypot(dx,dy)+'px';lines[i-1].style.transform=`rotate(${Math.atan2(dy,dx)}rad)`}});requestAnimationFrame(tick)}tick()}).catch(error=>{box.innerHTML='<p class="muted" style="padding:24px">Não foi possível carregar o grafo: '+esc(error.message)+'</p>'})}
-let structureRun=0;function openStructureGraph(){show('graph');let include=document.getElementById('showFolders').checked;api('/api/structure-graph?folders='+(include?'1':'0')).then(data=>renderStructureGraph(data,include)).catch(error=>{document.getElementById('graphbox').innerHTML='<p class="muted" style="padding:24px">Não foi possível carregar a estrutura: '+esc(error.message)+'</p>'})}
-function renderStructureGraph(data,includeFolders){let box=document.getElementById('graphbox'),run=++structureRun;let width=box.clientWidth,height=box.clientHeight;box.innerHTML='';if(!data.nodes.length){box.innerHTML='<p class="muted" style="padding:24px">Ainda não existem ficheiros indexados.</p>';return}let map=new Map(data.nodes.map(n=>[n.id,{...n}]));let folders=data.nodes.filter(n=>n.type==='folder'),files=data.nodes.filter(n=>n.type==='file');folders.forEach((n,i)=>{let columns=Math.max(1,Math.ceil(Math.sqrt(folders.length)));n.x=120+(i%columns)*(Math.max(170,(width-240)/columns));n.y=105+Math.floor(i/columns)*150;n.fixed=true});let parent=new Map();data.edges.forEach(e=>{if(map.get(e.target)?.type==='file')parent.set(e.target,e.source)});files.forEach((n,i)=>{let anchor=map.get(parent.get(n.id));if(anchor){let a=(i*2.4)%6.28,r=75+(i%4)*24;n.x=anchor.x+r*Math.cos(a);n.y=anchor.y+r*Math.sin(a);n.anchor=anchor}else{let a=i*2.4,r=30+8*Math.sqrt(i);n.x=width/2+r*Math.cos(a);n.y=height/2+r*Math.sin(a)}});let visible=includeFolders?data.nodes:files;let visibleSet=new Set(visible.map(n=>n.id));let lines=data.edges.filter(e=>visibleSet.has(e.source)&&visibleSet.has(e.target)).map(e=>{let l=document.createElement('i');l.className='edge '+(map.get(e.source).type==='folder'&&map.get(e.target).type==='folder'?'folder-edge':'');box.append(l);return {e,l}});let elements=new Map();visible.forEach(n=>{let el=document.createElement('div');el.className='node '+n.type;el.textContent=n.type==='folder'?'📁 '+n.label:n.label;el.title=n.label;box.append(el);let drag=false;el.onpointerdown=e=>{drag=true;if(el.setPointerCapture)el.setPointerCapture(e.pointerId)};el.onpointermove=e=>{if(drag){let r=box.getBoundingClientRect();n.x=e.clientX-r.left;n.y=e.clientY-r.top;n.fixed=true}};el.onpointerup=()=>drag=false;elements.set(n.id,el)});function tick(){if(run!==structureRun)return;files.forEach((n,i)=>{if(n.fixed)return;if(n.anchor){let dx=n.anchor.x-n.x,dy=n.anchor.y-n.y,d=Math.max(1,Math.hypot(dx,dy));let desired=92+(i%4)*18;n.x+=dx*(d-desired)*.006;n.y+=dy*(d-desired)*.006}});visible.forEach(n=>{n.x=Math.max(55,Math.min(width-55,n.x));n.y=Math.max(40,Math.min(height-40,n.y));let el=elements.get(n.id);el.style.left=n.x+'px';el.style.top=n.y+'px'});lines.forEach(({e,l})=>{let a=map.get(e.source),b=map.get(e.target),dx=b.x-a.x,dy=b.y-a.y;l.style.left=a.x+'px';l.style.top=a.y+'px';l.style.width=Math.hypot(dx,dy)+'px';l.style.transform=`rotate(${Math.atan2(dy,dx)}rad)`});requestAnimationFrame(tick)}tick()}
-let graphFolderPath=null;function openRootGraph(){graphFolderPath=null;show('graph');api('/api/root-graph').then(renderContextGraph)}function openFolderGraph(path){graphFolderPath=path;show('graph');let files=document.getElementById('showFiles').checked;api('/api/folder-graph?path='+encodeURIComponent(path)+'&files='+(files?'1':'0')).then(renderContextGraph)}function refreshFolderGraph(){if(graphFolderPath)openFolderGraph(graphFolderPath);else openRootGraph()}function renderContextGraph(data){let box=document.getElementById('graphbox'),title=document.getElementById('graphTitle');title.textContent=data.title||'Grafo estrutural';box.innerHTML='';if(!data.nodes.length){box.innerHTML='<p class="muted" style="padding:24px">Nenhuma pasta indexada neste nível.</p>';return}let width=box.clientWidth,height=box.clientHeight,nodes=data.nodes.map(n=>({...n})),map=new Map(nodes.map(n=>[n.id,n]));let center=nodes.find(n=>n.center||n.type==='workspace')||nodes[0];center.x=width/2;center.y=height/2;let others=nodes.filter(n=>n!==center);others.forEach((n,i)=>{let angle=Math.PI*2*i/Math.max(others.length,1),radius=n.type==='file'?Math.min(245,115+Math.floor(i/8)*34):220;n.x=center.x+radius*Math.cos(angle);n.y=center.y+radius*Math.sin(angle)});let lines=data.edges.map(e=>{let line=document.createElement('i');line.className='edge '+(map.get(e.target)?.type==='folder'?'folder-edge':'');box.append(line);return {e,line}});let elements=new Map();nodes.forEach(n=>{let el=document.createElement('div');el.className='node '+n.type;el.textContent=n.type==='folder'?'📁 '+n.label:n.type==='workspace'?'✦ '+n.label:n.label;el.title=n.type==='folder'?'Duplo clique para abrir a pasta no grafo':n.type==='file'?'Duplo clique para abrir o ficheiro':n.label;box.append(el);let dragging=false;el.onpointerdown=e=>{dragging=true;if(el.setPointerCapture)el.setPointerCapture(e.pointerId)};el.onpointermove=e=>{if(dragging){let rect=box.getBoundingClientRect();n.x=e.clientX-rect.left;n.y=e.clientY-rect.top;draw()}};el.onpointerup=()=>dragging=false;el.ondblclick=()=>{if(n.type==='folder')openFolderGraph(n.path);if(n.type==='file')openFile(n.file_id)};elements.set(n.id,el)});function draw(){nodes.forEach(n=>{n.x=Math.max(65,Math.min(width-65,n.x));n.y=Math.max(45,Math.min(height-45,n.y));let el=elements.get(n.id);el.style.left=n.x+'px';el.style.top=n.y+'px'});lines.forEach(({e,line})=>{let a=map.get(e.source),b=map.get(e.target),dx=b.x-a.x,dy=b.y-a.y;line.style.left=a.x+'px';line.style.top=a.y+'px';line.style.width=Math.hypot(dx,dy)+'px';line.style.transform=`rotate(${Math.atan2(dy,dx)}rad)`})}draw();if(data.truncated){let hint=document.createElement('p');hint.className='muted';hint.style.cssText='position:absolute;left:16px;bottom:8px';hint.textContent='Mostrando os primeiros 80 ficheiros desta pasta.';box.append(hint)}}
-let graphView={zoom:1,panX:0,panY:0,layer:null,run:0,path:null};function applyGraphView(){if(graphView.layer)graphView.layer.style.transform=`translate(${graphView.panX}px,${graphView.panY}px) scale(${graphView.zoom})`}function zoomGraph(factor){let box=document.getElementById('graphbox'),x=box.clientWidth/2,y=box.clientHeight/2,next=Math.max(.35,Math.min(3.2,graphView.zoom*factor)),ratio=next/graphView.zoom;graphView.panX=x-(x-graphView.panX)*ratio;graphView.panY=y-(y-graphView.panY)*ratio;graphView.zoom=next;applyGraphView()}function resetGraphView(){graphView.zoom=1;graphView.panX=0;graphView.panY=0;applyGraphView()}function openRootGraph(){graphView.path=null;show('graph');api('/api/root-graph').then(renderObsidianGraph)}function openFolderGraph(path){graphView.path=path;show('graph');let files=document.getElementById('showFiles').checked;api('/api/folder-graph?path='+encodeURIComponent(path)+'&files='+(files?'1':'0')+'&recursive=1').then(renderObsidianGraph)}function refreshFolderGraph(){if(graphView.path)openFolderGraph(graphView.path);else openRootGraph()}function renderObsidianGraph(data){let box=document.getElementById('graphbox'),title=document.getElementById('graphTitle'),run=++graphView.run,width=box.clientWidth,height=box.clientHeight;title.textContent=data.title||'Grafo estrutural';box.innerHTML='';resetGraphView();let layer=document.createElement('div');layer.className='graph-layer';box.append(layer);graphView.layer=layer;if(!data.nodes.length){layer.innerHTML='<p class="muted" style="padding:24px">Nenhuma pasta indexada neste nível.</p>';return}let nodes=data.nodes.map(n=>({...n,vx:0,vy:0,fixed:false})),map=new Map(nodes.map(n=>[n.id,n])),center=nodes.find(n=>n.center||n.type==='workspace')||nodes[0],children=new Map(),parent=new Map();data.edges.forEach(e=>{parent.set(e.target,e.source);if(!children.has(e.source))children.set(e.source,[]);children.get(e.source).push(e.target)});center.x=center.homeX=width/2;center.y=center.homeY=height/2;center.fixed=true;function place(id,depth,start,span){let kids=children.get(id)||[],folders=kids.filter(k=>map.get(k)?.type!=='file'),files=kids.filter(k=>map.get(k)?.type==='file'),ordered=[...folders,...files],anchor=map.get(id);ordered.forEach((childId,i)=>{let n=map.get(childId),angle=start+span*(i+.5)/Math.max(ordered.length,1),radius=n.type==='file'?88+Math.min(80,Math.floor(i/8)*13):depth===0?250:150;n.x=n.homeX=anchor.homeX+Math.cos(angle)*radius;n.y=n.homeY=anchor.homeY+Math.sin(angle)*radius;if(n.type!=='file')place(childId,depth+1,angle-.8,1.6)})}place(center.id,0,-Math.PI,Math.PI*2);let lineItems=data.edges.map(e=>{let el=document.createElement('i');el.className='edge '+(map.get(e.target)?.type==='folder'?'folder-edge':'');layer.append(el);return {e,el}}),elements=new Map(),selectedNode=null;function selectNode(n){if(selectedNode)elements.get(selectedNode.id)?.classList.remove('selected');selectedNode=n;elements.get(n.id)?.classList.add('selected');document.getElementById('graphHint').textContent=n.type==='folder'?`${n.label}: ${n.count||0} ficheiros. Clique para navegar nesta pasta.`:`${n.label}. Duplo clique para abrir o ficheiro.`}nodes.forEach(n=>{let el=document.createElement('div');el.className='node '+n.type;el.textContent=n.type==='folder'?'📁 '+n.label:n.type==='workspace'?'✦ '+n.label:n.label;el.title=n.label;layer.append(el);let drag=false,moved=false,lastX=0,lastY=0;el.onpointerdown=e=>{drag=true;moved=false;lastX=e.clientX;lastY=e.clientY;el.setPointerCapture?.(e.pointerId);e.stopPropagation()};el.onpointermove=e=>{if(drag){if(Math.hypot(e.clientX-lastX,e.clientY-lastY)>3)moved=true;let r=box.getBoundingClientRect();n.x=(e.clientX-r.left-graphView.panX)/graphView.zoom;n.y=(e.clientY-r.top-graphView.panY)/graphView.zoom;n.fixed=true}};el.onpointerup=()=>drag=false;el.onclick=e=>{e.stopPropagation();if(moved)return;if(n.type==='folder'&&n!==center)openFolderGraph(n.path);else selectNode(n)};el.ondblclick=()=>{if(n.type==='file')openFile(n.file_id)};elements.set(n.id,el)});let panning=false,lastX=0,lastY=0;box.onpointerdown=e=>{if(e.target===box||e.target===layer){panning=true;lastX=e.clientX;lastY=e.clientY;box.setPointerCapture?.(e.pointerId)}};box.onpointermove=e=>{if(panning){graphView.panX+=e.clientX-lastX;graphView.panY+=e.clientY-lastY;lastX=e.clientX;lastY=e.clientY;applyGraphView()}};box.onpointerup=()=>panning=false;box.onwheel=e=>{e.preventDefault();let next=e.deltaY<0?1.12:.89;let r=box.getBoundingClientRect(),x=e.clientX-r.left,y=e.clientY-r.top,zoom=Math.max(.35,Math.min(3.2,graphView.zoom*next)),ratio=zoom/graphView.zoom;graphView.panX=x-(x-graphView.panX)*ratio;graphView.panY=y-(y-graphView.panY)*ratio;graphView.zoom=zoom;applyGraphView()},{passive:false};function draw(){nodes.forEach(n=>{let el=elements.get(n.id);el.style.left=n.x+'px';el.style.top=n.y+'px'});lineItems.forEach(({e,el})=>{let a=map.get(e.source),b=map.get(e.target),dx=b.x-a.x,dy=b.y-a.y;el.style.left=a.x+'px';el.style.top=a.y+'px';el.style.width=Math.hypot(dx,dy)+'px';el.style.transform=`rotate(${Math.atan2(dy,dx)}rad)`})}function tick(){if(run!==graphView.run)return;for(let i=0;i<nodes.length;i++)for(let j=i+1;j<nodes.length;j++){let a=nodes[i],b=nodes[j],dx=a.x-b.x,dy=a.y-b.y,d=Math.max(24,Math.hypot(dx,dy)),push=(a.type==='file'&&b.type==='file'?360:1100)/(d*d);if(!a.fixed){a.vx+=dx/d*push;a.vy+=dy/d*push}if(!b.fixed){b.vx-=dx/d*push;b.vy-=dy/d*push}}nodes.forEach(n=>{if(!n.fixed){n.vx+=(n.homeX-n.x)*.004;n.vy+=(n.homeY-n.y)*.004;n.vx*=.82;n.vy*=.82;n.x+=n.vx;n.y+=n.vy}});draw();requestAnimationFrame(tick)}draw();tick();if(data.truncated){let hint=document.createElement('p');hint.className='muted';hint.style.cssText='position:absolute;left:16px;bottom:8px';hint.textContent='Mostrando os primeiros 180 ficheiros desta pasta.';layer.append(hint)}}
-function indexFolder(){let input=document.getElementById('folder');api('/api/index?path='+encodeURIComponent(input.value)).then(x=>{document.getElementById('progressText').textContent=x.message;poll()})}function poll(){api('/api/progress').then(p=>{let pct=p.total?Math.round(100*p.current/p.total):0;document.getElementById('bar').style.width=pct+'%';document.getElementById('progressText').textContent=p.active?`A indexar ${p.current}/${p.total}: ${p.name} (${pct}%)`:p.result;if(p.active)setTimeout(poll,350);else search()})}document.getElementById('query').addEventListener('keydown',e=>e.key==='Enter'&&search());search();
-</script></body></html>'''
+def open_local_file(path: Path) -> None:
+    if sys.platform.startswith("win"):
+        os.startfile(path)  # noqa: S606
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", str(path)])
+    else:
+        subprocess.Popen(["xdg-open", str(path)])
 
-# Esta camada é entregue depois da interface base para manter a física do
-# grafo legível e independente das restantes telas. Os ficheiros são pontos
-# leves, mas participam da mesma simulação de forças que as pastas.
-GRAPH_PHYSICS_SCRIPT = r'''<script>
-window.graphPhysics={zoom:1,panX:0,panY:0,layer:null,run:0,path:null};
-function physicsTransform(){let s=window.graphPhysics;if(s.layer)s.layer.style.transform=`translate(${s.panX}px,${s.panY}px) scale(${s.zoom})`}
-window.resetGraphView=function(){let s=window.graphPhysics;s.zoom=1;s.panX=0;s.panY=0;physicsTransform()};
-window.zoomGraph=function(factor){let s=window.graphPhysics,box=document.getElementById('graphbox'),x=box.clientWidth/2,y=box.clientHeight/2,next=Math.max(.3,Math.min(3.5,s.zoom*factor)),ratio=next/s.zoom;s.panX=x-(x-s.panX)*ratio;s.panY=y-(y-s.panY)*ratio;s.zoom=next;physicsTransform()};
-window.openRootGraph=function(){window.graphPhysics.path=null;show('graph');api('/api/root-graph').then(window.renderObsidianGraph)};
-window.openFolderGraph=function(path){let s=window.graphPhysics;s.path=path;show('graph');let files=document.getElementById('showFiles').checked;api('/api/folder-graph?path='+encodeURIComponent(path)+'&files='+(files?'1':'0')+'&recursive=1').then(window.renderObsidianGraph)};
-window.refreshFolderGraph=function(){let s=window.graphPhysics;s.path?window.openFolderGraph(s.path):window.openRootGraph()};
-window.renderObsidianGraph=function(data){
-  const box=document.getElementById('graphbox'),title=document.getElementById('graphTitle'),s=window.graphPhysics,run=++s.run,w=box.clientWidth,h=box.clientHeight;
-  title.textContent=data.title||'Grafo estrutural';box.innerHTML='';window.resetGraphView();
-  const layer=document.createElement('div');layer.className='graph-layer';box.append(layer);s.layer=layer;
-  if(!data.nodes.length){layer.innerHTML='<p class="muted" style="padding:24px">Nenhuma pasta indexada neste nível.</p>';return}
-  const nodes=data.nodes.map(n=>({...n,x:0,y:0,homeX:0,homeY:0,vx:0,vy:0,fixed:false})),byId=new Map(nodes.map(n=>[n.id,n])),children=new Map(),parent=new Map();
-  data.edges.forEach(e=>{parent.set(e.target,e.source);if(!children.has(e.source))children.set(e.source,[]);children.get(e.source).push(e.target)});
-  const center=nodes.find(n=>n.center||n.type==='workspace')||nodes[0];center.x=center.homeX=w/2;center.y=center.homeY=h/2;center.fixed=true;
-  function seed(parentId,depth,start,span){const anchor=byId.get(parentId),kids=children.get(parentId)||[],folders=kids.filter(id=>byId.get(id).type!=='file'),files=kids.filter(id=>byId.get(id).type==='file'),ordered=[...folders,...files];ordered.forEach((id,index)=>{const n=byId.get(id),a=start+span*(index+.5)/Math.max(1,ordered.length),r=n.type==='file'?78+Math.min(95,Math.floor(index/7)*14):(depth===0?245:145);n.x=n.homeX=anchor.homeX+Math.cos(a)*r;n.y=n.homeY=anchor.homeY+Math.sin(a)*r;if(n.type!=='file')seed(id,depth+1,a-.78,1.56)})}
-  seed(center.id,0,-Math.PI,Math.PI*2);
-  const elements=new Map(),lines=data.edges.map(e=>{const el=document.createElement('i');el.className='edge '+(byId.get(e.target)?.type==='folder'?'folder-edge':'');layer.append(el);return {e,el}});let selected=null;
-  function select(n){if(selected)elements.get(selected.id)?.classList.remove('selected');selected=n;elements.get(n.id)?.classList.add('selected');document.getElementById('graphHint').textContent=n.type==='folder'?`${n.label}: ${n.count||0} ficheiros. Clique para navegar.`:`${n.label}. Arraste-o para alterar a simulação; duplo clique para abrir.`}
-  nodes.forEach(n=>{const el=document.createElement('div');el.className='node '+n.type;el.textContent=n.type==='folder'?'📁 '+n.label:n.type==='workspace'?'✦ '+n.label:n.label;el.title=n.label;layer.append(el);let drag=false,moved=false,x0=0,y0=0;el.onpointerdown=e=>{drag=true;moved=false;x0=e.clientX;y0=e.clientY;el.setPointerCapture?.(e.pointerId);e.stopPropagation()};el.onpointermove=e=>{if(!drag)return;moved||=(Math.hypot(e.clientX-x0,e.clientY-y0)>3);const r=box.getBoundingClientRect();n.x=(e.clientX-r.left-s.panX)/s.zoom;n.y=(e.clientY-r.top-s.panY)/s.zoom;n.homeX=n.x;n.homeY=n.y;n.vx=n.vy=0;n.fixed=true};el.onpointerup=()=>drag=false;el.onclick=e=>{e.stopPropagation();if(moved)return;if(n.type==='folder'&&n!==center)window.openFolderGraph(n.path);else select(n)};el.ondblclick=()=>{if(n.type==='file')openFile(n.file_id)};elements.set(n.id,el)});
-  let panning=false,px=0,py=0;box.onpointerdown=e=>{if(e.target===box||e.target===layer){panning=true;px=e.clientX;py=e.clientY;box.setPointerCapture?.(e.pointerId)}};box.onpointermove=e=>{if(!panning)return;s.panX+=e.clientX-px;s.panY+=e.clientY-py;px=e.clientX;py=e.clientY;physicsTransform()};box.onpointerup=()=>panning=false;
-  box.onwheel=e=>{e.preventDefault();const r=box.getBoundingClientRect(),x=e.clientX-r.left,y=e.clientY-r.top,next=Math.max(.3,Math.min(3.5,s.zoom*(e.deltaY<0?1.12:.89))),ratio=next/s.zoom;s.panX=x-(x-s.panX)*ratio;s.panY=y-(y-s.panY)*ratio;s.zoom=next;physicsTransform()},{passive:false};
-  function draw(){nodes.forEach(n=>{const el=elements.get(n.id);el.style.left=n.x+'px';el.style.top=n.y+'px'});lines.forEach(({e,el})=>{const a=byId.get(e.source),b=byId.get(e.target),dx=b.x-a.x,dy=b.y-a.y;el.style.left=a.x+'px';el.style.top=a.y+'px';el.style.width=Math.hypot(dx,dy)+'px';el.style.transform=`rotate(${Math.atan2(dy,dx)}rad)`})}
-  function tick(now){if(run!==s.run)return;for(let i=0;i<nodes.length;i++)for(let j=i+1;j<nodes.length;j++){const a=nodes[i],b=nodes[j],dx=a.x-b.x,dy=a.y-b.y,d=Math.max(18,Math.hypot(dx,dy)),strength=(a.type==='file'&&b.type==='file'?650:1650)/(d*d);if(!a.fixed){a.vx+=dx/d*strength;a.vy+=dy/d*strength}if(!b.fixed){b.vx-=dx/d*strength;b.vy-=dy/d*strength}}lines.forEach(({e})=>{const a=byId.get(e.source),b=byId.get(e.target),dx=b.x-a.x,dy=b.y-a.y,d=Math.max(1,Math.hypot(dx,dy)),ideal=b.type==='file'?94:165,pull=(d-ideal)*.007;if(!a.fixed){a.vx+=dx/d*pull;a.vy+=dy/d*pull}if(!b.fixed){b.vx-=dx/d*pull;b.vy-=dy/d*pull}});nodes.forEach((n,i)=>{if(n.fixed)return;n.vx+=(n.homeX-n.x)*.002;n.vy+=(n.homeY-n.y)*.002;n.vx+=Math.sin(now*.001+i*2.17)*.012;n.vy+=Math.cos(now*.0012+i*1.31)*.012;n.vx*=.91;n.vy*=.91;n.x+=n.vx;n.y+=n.vy});draw();requestAnimationFrame(tick)}
-  draw();requestAnimationFrame(tick);if(data.truncated){const hint=document.createElement('p');hint.className='muted';hint.style.cssText='position:absolute;left:16px;bottom:8px';hint.textContent='Mostrando os primeiros 180 ficheiros desta pasta.';layer.append(hint)}
-};
-</script>'''
+
+def reveal_local_file(path: Path) -> None:
+    if sys.platform.startswith("win"):
+        subprocess.Popen(["explorer.exe", "/select,", str(path)])
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", "-R", str(path)])
+    else:
+        subprocess.Popen(["xdg-open", str(path.parent)])
+
+
+def record_for(file_id: str) -> dict | None:
+    with catalog.lock:
+        return service.detail_record(file_id)
+
+
+def json_value(value):
+    if value is None:
+        return None
+    if hasattr(value, "item"):
+        value = value.item()
+    if isinstance(value, float) and (value != value or value in (float("inf"), float("-inf"))):
+        return None
+    return str(value) if not isinstance(value, (str, int, float, bool, list, dict)) else value
+
+
+def dataset_rows(record: dict, sheet_name: str | None, offset: int, limit: int, query: str):
+    import pandas as pd
+
+    path = Path(record["path"])
+    limit = max(1, min(limit, 250))
+    if path.suffix.lower() == ".csv":
+        frame = pd.read_csv(path, nrows=offset + limit, encoding_errors="replace").iloc[offset:]
+        sheet_name = "Dados"
+    else:
+        workbook = pd.ExcelFile(path)
+        sheet_name = sheet_name or workbook.sheet_names[0]
+        frame = pd.read_excel(path, sheet_name=sheet_name, nrows=offset + limit).iloc[offset:]
+    frame = frame.fillna("")
+    if query.strip():
+        term = query.casefold()
+        frame = frame[frame.astype(str).apply(lambda row: row.str.casefold().str.contains(term, regex=False).any(), axis=1)]
+    columns = [str(column) for column in frame.columns]
+    rows = [[json_value(value) for value in row] for row in frame.itertuples(index=False, name=None)]
+    return {"sheet": sheet_name, "columns": columns, "rows": rows, "offset": offset, "limit": limit}
+
 
 class Handler(BaseHTTPRequestHandler):
-    def log_message(self,*args): pass
-    def send_json(self, value):
-        data=json.dumps(value,default=str).encode();self.send_response(200);self.send_header('Content-Type','application/json');self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data)
+    def log_message(self, *_args):
+        pass
+
+    def send_json(self, payload, status=HTTPStatus.OK):
+        data = json.dumps(payload, default=str, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def send_file(self, path: Path, mime_type: str | None = None):
+        if not path.is_file():
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        content = path.read_bytes()
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", mime_type or mimetypes.guess_type(path.name)[0] or "application/octet-stream")
+        self.send_header("Content-Length", str(len(content)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(content)
+
+    def body(self):
+        size = int(self.headers.get("Content-Length", "0"))
+        try:
+            return json.loads(self.rfile.read(size) or b"{}")
+        except json.JSONDecodeError:
+            return {}
+
+    def static(self, route: str):
+        target = STATIC_DIR / ("index.html" if route == "/" else route.removeprefix("/static/"))
+        try:
+            target.resolve().relative_to(STATIC_DIR.resolve())
+        except ValueError:
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        self.send_file(target)
+
     def do_GET(self):
-        parsed=urlparse(self.path); q=parse_qs(parsed.query)
-        if parsed.path=='/':
-            html = PAGE.replace('</body>', GRAPH_PHYSICS_SCRIPT + '</body>')
-            self.send_response(200);self.send_header('Content-Type','text/html;charset=utf-8');self.send_header('Cache-Control','no-store, max-age=0');self.end_headers();self.wfile.write(html.encode());return
-        if parsed.path=='/': self.send_response(200);self.send_header('Content-Type','text/html;charset=utf-8');self.send_header('Cache-Control','no-store, max-age=0');self.end_headers();self.wfile.write(PAGE.encode());return
-        if parsed.path=='/api/search':
+        parsed = urlparse(self.path)
+        query = parse_qs(parsed.query)
+        route = parsed.path
+        if route == "/" or route.startswith("/static/"):
+            return self.static(route)
+        if route == "/api/status":
             with catalog.lock:
-                results = [{'id':r[0],'name':r[1],'path':r[2],'kind':r[4]} for r in service.search(q.get('q',[''])[0])]
-            return self.send_json(results)
-        if parsed.path=='/api/details':
+                files = catalog.scalar("SELECT count(*) FROM files WHERE deleted=FALSE AND excluded=FALSE") or 0
+                folders = catalog.scalar("SELECT count(*) FROM folders") or 0
+            return self.send_json({"version": BUILD_ID, "files": files, "folders": folders, "settings": Settings.load().__dict__})
+        if route == "/api/search":
+            text = query.get("q", [""])[0]
+            category = query.get("category", [None])[0]
             with catalog.lock:
-                d = service.detail_record(q['id'][0])
-                if d is None: return self.send_json({'error': 'Ficheiro não encontrado.'})
-                payload = {'name':d['filename'],'path':d['path'],'kind':d['file_category'],'text':(d.get('text_content') or '')[:30000],'dataset':'\n'.join(f'{s}: {r} linhas × {c} colunas\n{columns}' for s,r,c,columns in service.dataset_preview(q['id'][0])),'tags':[t[0] for t in service.tags(q['id'][0])],'relations':service.relations(q['id'][0])}
-            return self.send_json(payload)
-        if parsed.path=='/api/graph':
-            with catalog.lock: payload = service.graph(q['id'][0])
-            return self.send_json(payload)
-        if parsed.path=='/api/root-graph':
-            with catalog.lock: payload = service.root_graph()
-            return self.send_json(payload)
-        if parsed.path=='/api/folder-graph':
-            with catalog.lock: payload = service.folder_graph(q.get('path',[''])[0], q.get('files',['1'])[0] != '0', recursive=q.get('recursive',['1'])[0] != '0')
-            return self.send_json(payload)
-        if parsed.path=='/api/open':
+                rows = service.search(text, category)
+            return self.send_json([{"id": row[0], "name": row[1], "path": row[2], "extension": row[3], "kind": row[4], "size": row[5], "score": row[6]} for row in rows[:300]])
+        if route == "/api/recent":
             with catalog.lock:
-                record = service.detail_record(q.get('id',[''])[0])
-            if not record or not Path(record['path']).is_file(): return self.send_json({'ok': False, 'error': 'Ficheiro não encontrado.'})
-            open_local_file(record['path'])
-            return self.send_json({'ok': True})
-        if parsed.path=='/api/structure-graph':
-            with catalog.lock: payload = service.structure_graph(q.get('folders',['1'])[0] != '0')
+                rows = catalog.conn.execute("""SELECT file_id,filename,path,file_category,size_bytes,modified_at
+                    FROM files WHERE deleted=FALSE AND excluded=FALSE ORDER BY indexed_at DESC NULLS LAST LIMIT 80""").fetchall()
+            return self.send_json([{"id": row[0], "name": row[1], "path": row[2], "kind": row[3], "size": row[4], "modified": row[5]} for row in rows])
+        if route == "/api/folders":
+            with catalog.lock:
+                roots = service.folder_roots()
+            return self.send_json([{"id": row[0], "path": row[1], "name": row[2], "files": row[3], "bytes": row[4] or 0} for row in roots])
+        if route == "/api/collections":
+            with catalog.lock:
+                rows = service.collections()
+                payload = []
+                for collection_id, name, description, created_at in rows:
+                    items = service.collection_items(collection_id)
+                    payload.append({"id": collection_id, "name": name, "description": description or "", "created_at": created_at, "items": [{"type": item[0], "id": item[1], "label": item[2]} for item in items]})
             return self.send_json(payload)
-        if parsed.path=='/api/folders':
-            with catalog.lock: payload = [{'id':r[0],'path':r[1],'name':r[2],'files':r[3],'bytes':r[4] or 0} for r in service.folder_roots()]
-            return self.send_json(payload)
-        if parsed.path=='/api/folder':
-            with catalog.lock: folders, files = service.folder_children(q.get('path',[''])[0])
-            return self.send_json({'path':q.get('path',[''])[0], 'folders':[{'id':r[0],'path':r[1],'name':r[2],'files':r[3],'bytes':r[4] or 0} for r in folders], 'files':[{'id':r[0],'name':r[1],'path':r[2],'kind':r[3],'bytes':r[4]} for r in files]})
-        if parsed.path=='/api/progress': return self.send_json(progress)
-        if parsed.path=='/api/index':
-            path=Path(q.get('path',[''])[0])
-            if not path.is_dir(): return self.send_json({'message':'Pasta inválida.'})
-            if progress['active']: return self.send_json({'message':'Já existe uma indexação em curso.'})
+        if route == "/api/folder":
+            path = query.get("path", [""])[0]
+            with catalog.lock:
+                folders, files = service.folder_children(path)
+            return self.send_json({"path": path, "folders": [{"id": row[0], "path": row[1], "name": row[2], "files": row[3], "bytes": row[4] or 0} for row in folders], "files": [{"id": row[0], "name": row[1], "path": row[2], "kind": row[3], "size": row[4]} for row in files]})
+        if route == "/api/details":
+            record = record_for(query.get("id", [""])[0])
+            if not record:
+                return self.send_json({"error": "Ficheiro não encontrado."}, HTTPStatus.NOT_FOUND)
+            with catalog.lock:
+                pages = catalog.conn.execute("SELECT page_number,text_content FROM document_pages WHERE file_id=? ORDER BY page_number", [record["file_id"]]).fetchall()
+                datasets = service.dataset_preview(record["file_id"])
+                tags = [tag[0] for tag in service.tags(record["file_id"])]
+                relations = [{"type": item[0], "label": item[1], "target_type": item[2]} for item in service.relations(record["file_id"])]
+            return self.send_json({"file": record, "pages": [{"number": page[0], "text": page[1]} for page in pages], "datasets": [{"sheet": row[0], "rows": row[1], "columns": row[2], "schema": row[3] or ""} for row in datasets], "tags": tags, "relations": relations})
+        if route == "/api/dataset":
+            record = record_for(query.get("id", [""])[0])
+            if not record:
+                return self.send_json({"error": "Dataset não encontrado."}, HTTPStatus.NOT_FOUND)
+            try:
+                return self.send_json(dataset_rows(record, query.get("sheet", [None])[0], int(query.get("offset", [0])[0]), int(query.get("limit", [100])[0]), query.get("q", [""])[0]))
+            except Exception as error:
+                return self.send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+        if route == "/api/pdf-page":
+            record = record_for(query.get("id", [""])[0])
+            if not record or Path(record["path"]).suffix.lower() != ".pdf":
+                self.send_error(HTTPStatus.NOT_FOUND)
+                return
+            try:
+                import pymupdf
+                document = pymupdf.open(record["path"])
+                page = document.load_page(max(0, int(query.get("page", [1])[0]) - 1))
+                png = page.get_pixmap(matrix=pymupdf.Matrix(1.4, 1.4), alpha=False).tobytes("png")
+                document.close()
+                self.send_response(HTTPStatus.OK); self.send_header("Content-Type", "image/png"); self.send_header("Content-Length", str(len(png))); self.end_headers(); self.wfile.write(png)
+            except Exception as error:
+                self.send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+            return
+        if route == "/api/image":
+            record = record_for(query.get("id", [""])[0])
+            if not record:
+                self.send_error(HTTPStatus.NOT_FOUND)
+                return
+            return self.send_file(Path(record["path"]))
+        if route in {"/api/open", "/api/reveal"}:
+            record = record_for(query.get("id", [""])[0])
+            path = Path(record["path"]) if record else None
+            if not path or not path.exists():
+                return self.send_json({"ok": False, "error": "Ficheiro não encontrado."}, HTTPStatus.NOT_FOUND)
+            (open_local_file if route == "/api/open" else reveal_local_file)(path)
+            return self.send_json({"ok": True})
+        if route == "/api/graph":
+            with catalog.lock:
+                data = service.root_graph() if not query.get("path") else service.folder_graph(query["path"][0], query.get("files", ["1"])[0] != "0")
+            return self.send_json(data)
+        if route == "/api/progress":
+            with progress_lock:
+                return self.send_json(progress)
+        self.send_error(HTTPStatus.NOT_FOUND)
+
+    def do_POST(self):
+        route = urlparse(self.path).path
+        data = self.body()
+        if route == "/api/index":
+            folder = Path(str(data.get("path", ""))).expanduser()
+            if not folder.is_dir():
+                return self.send_json({"error": "Pasta inválida."}, HTTPStatus.BAD_REQUEST)
+            with progress_lock:
+                if progress["active"]:
+                    return self.send_json({"error": "Já existe uma indexação em curso."}, HTTPStatus.CONFLICT)
+                progress.update(active=True, current=0, total=0, name="", result="", errors=[])
+            settings = Settings.load()
+            if str(folder.resolve()) not in settings.directories:
+                settings.directories.append(str(folder.resolve()))
+                settings.save()
+                watcher.start(settings)
             def run():
-                progress.update(active=True,current=0,total=0,name='',result='')
-                a,b,c=Indexer(catalog).index_directory(path,lambda cur,total,name:progress.update(current=cur,total=total,name=name));progress.update(active=False,result=f'Concluído: {a} novos/alterados, {b} inalterados, {c} erros.')
-            threading.Thread(target=run,daemon=True).start();return self.send_json({'message':'Indexação iniciada.'})
-        self.send_error(404)
+                indexer = Indexer(catalog, Settings.load())
+                def update(current, total, name):
+                    with progress_lock:
+                        progress.update(current=current, total=total, name=name)
+                indexed, skipped, errors = indexer.index_directory(folder, update)
+                with progress_lock:
+                    progress.update(active=False, result=f"{indexed} indexados, {skipped} inalterados, {errors} erros.", errors=indexer.last_errors[-20:])
+            threading.Thread(target=run, daemon=True).start()
+            return self.send_json({"ok": True})
+        if route == "/api/config":
+            settings = Settings.load()
+            settings.directories = [str(Path(path)) for path in data.get("directories", settings.directories) if str(path).strip()]
+            settings.ignored_patterns = [str(pattern) for pattern in data.get("ignored_patterns", settings.ignored_patterns)]
+            settings.extensions = [str(extension) for extension in data.get("extensions", settings.extensions)]
+            settings.watch = bool(data.get("watch", settings.watch))
+            settings.save()
+            watcher.start(settings)
+            return self.send_json({"ok": True, "settings": settings.__dict__})
+        if route == "/api/tags":
+            with catalog.lock:
+                service.add_tag(str(data.get("file_id", "")), str(data.get("name", "")))
+            return self.send_json({"ok": True})
+        if route == "/api/relations":
+            with catalog.lock:
+                service.create_relation(str(data.get("file_id", "")), str(data.get("target_type", "other")), str(data.get("label", "")), str(data.get("relation_type", "related_to")))
+            return self.send_json({"ok": True})
+        if route == "/api/collections":
+            with catalog.lock:
+                name = str(data.get("name", "")).strip()
+                collection_id = catalog.scalar("SELECT collection_id FROM collections WHERE name=?", [name])
+                if not collection_id:
+                    collection_id = service.create_collection(name, str(data.get("description", "")))
+            return self.send_json({"ok": True, "id": collection_id})
+        if route == "/api/collections/items":
+            with catalog.lock:
+                service.add_to_collection(str(data.get("collection_id", "")), "file", str(data.get("file_id", "")))
+            return self.send_json({"ok": True})
+        self.send_error(HTTPStatus.NOT_FOUND)
+
 
 def start_server():
     server = None
     for port in range(8765, 8776):
         try:
-            server = ThreadingHTTPServer(('127.0.0.1', port), Handler)
+            server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
             break
         except OSError:
             continue
-    if server is None: raise RuntimeError('Não foi possível abrir uma porta local entre 8765 e 8775.')
-    url=f'http://127.0.0.1:{port}'
-    return server, url
+    if server is None:
+        raise RuntimeError("Não foi possível abrir uma porta local entre 8765 e 8775.")
+    watcher.start(Settings.load())
+    return server, f"http://127.0.0.1:{port}"
+
 
 def main():
     server, url = start_server()
-    print(f'Local Knowledge Explorer [{BUILD_ID}]: {url}');webbrowser.open(url);server.serve_forever()
+    print(f"Local Knowledge Explorer V{BUILD_ID}: {url}")
+    webbrowser.open(url)
+    try:
+        server.serve_forever()
+    finally:
+        watcher.stop()

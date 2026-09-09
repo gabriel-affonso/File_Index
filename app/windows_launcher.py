@@ -23,7 +23,7 @@ def main():
         raise SystemExit('windows_launcher só pode ser executado no Windows.')
     # Import tardio: caso uma dependência falhe, o utilizador recebe um diálogo
     # e um ficheiro de log, em vez de uma janela que desaparece imediatamente.
-    from app.web_main import BUILD_ID, start_server
+    from app.web_main import BUILD_ID, start_server, watcher
     server, url = start_server()
     threading.Thread(target=server.serve_forever, daemon=True).start()
     print(f'Local Knowledge Explorer [{BUILD_ID}]: {url}')
@@ -50,6 +50,7 @@ def main():
     finally:
         user32.UnregisterHotKey(None, HOTKEY_ID)
         server.shutdown()
+        watcher.stop()
 
 def report_startup_error(error: Exception):
     log_dir = Path(os.environ.get('LOCALAPPDATA', Path.home())) / 'LocalKnowledgeExplorer' / 'logs'

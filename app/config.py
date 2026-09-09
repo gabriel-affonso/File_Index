@@ -29,15 +29,17 @@ class Settings:
     directories: list[str] = field(default_factory=list)
     extensions: list[str] = field(default_factory=lambda: sorted(SUPPORTED_EXTENSIONS))
     ignored_patterns: list[str] = field(default_factory=lambda: ['~$*.xlsx', '*.tmp', '*.bak', '.git/', 'node_modules/', 'cache/'])
+    watch: bool = True
 
     @classmethod
     def load(cls):
         if not CONFIG_PATH.exists(): return cls()
         with CONFIG_PATH.open('rb') as file:
             raw = tomllib.load(file)
-        return cls(raw.get('indexing', {}).get('directories', []), raw.get('indexing', {}).get('extensions', sorted(SUPPORTED_EXTENSIONS)), raw.get('indexing', {}).get('ignored_patterns', []))
+        indexing = raw.get('indexing', {})
+        return cls(indexing.get('directories', []), indexing.get('extensions', sorted(SUPPORTED_EXTENSIONS)), indexing.get('ignored_patterns', []), indexing.get('watch', True))
 
     def save(self):
         def values(items): return ', '.join('"' + x.replace('"', '\\"') + '"' for x in items)
         CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        CONFIG_PATH.write_text('[database]\n' + f'path = "{DATABASE_PATH.as_posix()}"\n\n[indexing]\n' + f'directories = [{values(self.directories)}]\n' + f'extensions = [{values(self.extensions)}]\n' + f'ignored_patterns = [{values(self.ignored_patterns)}]\n')
+        CONFIG_PATH.write_text('[database]\n' + f'path = "{DATABASE_PATH.as_posix()}"\n\n[indexing]\n' + f'directories = [{values(self.directories)}]\n' + f'extensions = [{values(self.extensions)}]\n' + f'ignored_patterns = [{values(self.ignored_patterns)}]\n' + f'watch = {str(self.watch).lower()}\n', encoding='utf-8')

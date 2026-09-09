@@ -47,11 +47,11 @@ class ExplorerService:
     def remove_from_collection(self, collection_id, object_type, object_id): self.catalog.conn.execute('DELETE FROM collection_items WHERE collection_id=? AND object_type=? AND object_id=?',[collection_id,object_type,object_id])
     def folder_roots(self):
         return self.catalog.conn.execute("""SELECT folder_id,path,name,file_count,total_bytes FROM folders fo
-            WHERE EXISTS (SELECT 1 FROM files f WHERE f.directory LIKE fo.path || '%' AND f.deleted=FALSE AND f.excluded=FALSE)
+            WHERE EXISTS (SELECT 1 FROM files f WHERE (f.directory = fo.path OR replace(f.directory, '\\', '/') LIKE replace(fo.path, '\\', '/') || '/%') AND f.deleted=FALSE AND f.excluded=FALSE)
             AND (parent_path IS NULL OR parent_path NOT IN (SELECT path FROM folders)) ORDER BY name""").fetchall()
     def folder_children(self, path):
         folders = self.catalog.conn.execute('''SELECT folder_id,path,name,file_count,total_bytes FROM folders fo WHERE parent_path = ?
-            AND EXISTS (SELECT 1 FROM files f WHERE f.directory LIKE fo.path || '%' AND f.deleted=FALSE AND f.excluded=FALSE) ORDER BY name''', [path]).fetchall()
+            AND EXISTS (SELECT 1 FROM files f WHERE (f.directory = fo.path OR replace(f.directory, '\\', '/') LIKE replace(fo.path, '\\', '/') || '/%') AND f.deleted=FALSE AND f.excluded=FALSE) ORDER BY name''', [path]).fetchall()
         files = self.catalog.conn.execute('SELECT file_id,filename,path,file_category,size_bytes FROM files WHERE directory = ? AND deleted = FALSE AND excluded=FALSE ORDER BY filename', [path]).fetchall()
         return folders, files
     def structure_graph(self, include_folders: bool = True, file_limit: int = 350):
@@ -93,7 +93,7 @@ class ExplorerService:
             separator = '\\' if '\\' in path else '/'
             descendant_pattern = path.rstrip('\\/') + separator + '%'
             folders = self.catalog.conn.execute('''SELECT folder_id,path,parent_path,name,file_count FROM folders fo
-                WHERE (path = ? OR path LIKE ?) AND EXISTS (SELECT 1 FROM files f WHERE f.directory LIKE fo.path || '%' AND f.deleted=FALSE AND f.excluded=FALSE)
+                WHERE (path = ? OR path LIKE ?) AND EXISTS (SELECT 1 FROM files f WHERE (f.directory = fo.path OR replace(f.directory, '\\', '/') LIKE replace(fo.path, '\\', '/') || '/%') AND f.deleted=FALSE AND f.excluded=FALSE)
                 ORDER BY depth,path''', [path, descendant_pattern]).fetchall()
             path_ids = {folder_path: folder_id for folder_id, folder_path, _, _, _ in folders}
             for child_id, child_path, parent_path, child_name, child_count in folders:
