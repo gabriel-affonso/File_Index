@@ -8,6 +8,7 @@ from database.duckdb import Catalog
 from core.services import ExplorerService
 from indexing.indexer import Indexer
 
+BUILD_ID = 'graph-radial-4d8643d'
 catalog = Catalog(); service = ExplorerService(catalog)
 progress = {'active': False, 'current': 0, 'total': 0, 'name': '', 'result': ''}
 
@@ -99,4 +100,4 @@ def start_server():
 
 def main():
     server, url = start_server()
-    print(f'Local Knowledge Explorer: {url}');webbrowser.open(url);server.serve_forever()
+    print(f'Local Knowledge Explorer [{BUILD_ID}]: {url}');webbrowser.open(url);server.serve_forever()

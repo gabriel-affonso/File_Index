@@ -20,9 +20,10 @@ def main():
         raise SystemExit('windows_launcher só pode ser executado no Windows.')
     # Import tardio: caso uma dependência falhe, o utilizador recebe um diálogo
     # e um ficheiro de log, em vez de uma janela que desaparece imediatamente.
-    from app.web_main import start_server
+    from app.web_main import BUILD_ID, start_server
     server, url = start_server()
     threading.Thread(target=server.serve_forever, daemon=True).start()
+    print(f'Local Knowledge Explorer [{BUILD_ID}]: {url}')
     webbrowser.open(url)
     user32 = ctypes.windll.user32
     if not user32.RegisterHotKey(None, HOTKEY_ID, MOD_CONTROL | MOD_SHIFT, VK_SPACE):

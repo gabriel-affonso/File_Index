@@ -72,6 +72,11 @@ class ExplorerService:
         return {'nodes': nodes, 'edges': edges, 'truncated': len(files) == file_limit}
     def root_graph(self):
         roots = self.folder_roots()
+        # A configuração mais comum tem uma única pasta indexada. Abrir logo a
+        # sua vizinhança torna o grafo útil no primeiro clique, com essa pasta
+        # como centro, em vez de apresentar uma etapa intermédia vazia.
+        if len(roots) == 1:
+            return self.folder_graph(roots[0][1])
         nodes = [{'id': 'workspace', 'label': 'Local Explorer', 'type': 'workspace'}]
         edges = []
         for folder_id, path, name, count, _ in roots:
