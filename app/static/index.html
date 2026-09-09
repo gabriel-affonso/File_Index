@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>File Index V2</title>
   <link rel="stylesheet" href="/static/styles.css">
+  <link rel="stylesheet" href="/static/excel-constellation.css">
 </head>
 <body>
   <header class="topbar">
@@ -30,7 +31,7 @@
         <div id="viewHeading" class="view-heading"><h1>Explorar</h1><p>Ficheiros indexados recentemente.</p></div>
         <div id="fileList" class="file-list" role="list"></div>
       </section>
-      <section id="graphView" class="view hidden"><div class="toolbar"><strong id="orbitTitle">◎ Órbitas</strong><button data-nav="home">← Explorar</button><button id="graphRoot">Raiz</button><button id="schemaGraph">⌗ Constelação Excel</button><button class="preview-toggle">◧ Preview</button><button id="graphZoomIn">＋</button><button id="graphZoomOut">−</button><button id="graphReset">Fit</button><button id="physicsToggle">❚❚ Pausar</button><label title="Oculta todos os ficheiros; clique numa pasta para revelar apenas os ficheiros dela."><input id="graphFiles" type="checkbox"> ocultar ficheiros</label></div><div id="graphCanvas" class="graph-canvas"><div id="orbitHint" class="orbit-hint">Arraste o espaço para navegar · roda do mouse para zoom · clique para explorar</div></div></section>
+      <section id="graphView" class="view hidden"><div class="toolbar"><strong id="orbitTitle">◎ Órbitas</strong><button data-nav="home">← Explorar</button><button id="graphRoot">Raiz</button><button id="schemaGraph">⌗ Constelação Excel</button><div id="excelControls" class="excel-controls hidden"><label>Colunas <input id="excelColumnFilter" list="excelColumnOptions" placeholder="Ex.: poc, concelho"></label><datalist id="excelColumnOptions"></datalist><button id="applyExcelFilter">Filtrar</button><button id="clearExcelFilter">Limpar</button></div><button class="preview-toggle">◧ Preview</button><button id="graphZoomIn">＋</button><button id="graphZoomOut">−</button><button id="graphReset">Fit</button><button id="physicsToggle">❚❚ Pausar</button><label id="graphFilesLabel" title="Oculta todos os ficheiros; clique numa pasta para revelar apenas os ficheiros dela."><input id="graphFiles" type="checkbox"> ocultar ficheiros</label></div><div id="graphCanvas" class="graph-canvas"><div id="orbitHint" class="orbit-hint">Arraste o espaço para navegar · roda do mouse para zoom · clique para explorar</div></div></section>
       <section id="collectionsView" class="view hidden"><div class="toolbar"><button data-nav="home">← Explorar</button><div class="toolbar-spacer"></div><button id="createCollection" class="accent">＋ Coleção</button></div><div id="collectionsList" class="collection-list"></div></section>
     </main>
     <aside id="previewPane" class="preview-pane"><div class="empty-preview"><div>✦</div><h2>Preview</h2><p>Selecione um ficheiro para ver conteúdo, dados e relações sem abrir outra aplicação.</p></div></aside>

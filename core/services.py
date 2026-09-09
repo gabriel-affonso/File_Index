@@ -125,24 +125,71 @@ class ExplorerService:
                 edges.append({'source': f'folder:{path_ids[directory]}', 'target': f'file:{file_id}', 'kind': 'contains'})
         return {'nodes': nodes, 'edges': edges, 'title': folder_path, 'truncated': len(files) >= file_limit}
 
-    def excel_similarity_graph(self):
-        """Liga apenas datasets Excel/CSV que partilham nomes de colunas."""
+    def excel_similarity_graph(self, selected_columns: list[str] | None = None):
+        """Uma constelação Excel pequena e legível, baseada em colunas úteis.
+
+        Uma única coluna banal (por exemplo, ``Data``) em dezenas de ficheiros
+        não é uma relação útil.  Por isso a vista geral descarta campos muito
+        frequentes e mantém só as ligações mais fortes de cada ficheiro.  Quando
+        o utilizador escolhe colunas, essas colunas passam a ser o critério
+        explícito e não são descartadas por serem frequentes.
+        """
         rows = self.catalog.conn.execute('''SELECT f.file_id,f.filename,dc.column_name
             FROM files f JOIN datasets ds ON ds.file_id=f.file_id
             JOIN sheets s ON s.dataset_id=ds.dataset_id
             JOIN dataset_columns dc ON dc.sheet_id=s.sheet_id
             WHERE f.deleted=FALSE AND f.excluded=FALSE AND f.extension IN ('.xlsx','.xls')''').fetchall()
-        files, by_column = {}, defaultdict(set)
+        files, by_column, file_columns = {}, defaultdict(set), defaultdict(set)
         for file_id, filename, column_name in rows:
             files[file_id] = filename
             normalised = ' '.join(str(column_name).casefold().split())
             if normalised:
                 by_column[normalised].add(file_id)
+                file_columns[file_id].add(normalised)
+
+        requested = {' '.join(str(column).casefold().split()) for column in (selected_columns or []) if str(column).strip()}
+        included = {identifier for identifier, columns in file_columns.items() if not requested or requested.issubset(columns)}
+        # Campos presentes em quase todos os livros geram uma teia ilegível e
+        # pouco informativa. O limite cresce ligeiramente com o catálogo.
+        common_limit = max(8, int(len(files) * 0.30))
+        usable_columns = {
+            column for column, identifiers in by_column.items()
+            if requested and column in requested or (1 < len(identifiers) <= common_limit)
+        }
         shared = defaultdict(list)
-        for column, identifiers in by_column.items():
+        for column in usable_columns:
+            identifiers = by_column[column] & included
             for left, right in combinations(sorted(identifiers), 2):
                 shared[(left, right)].append(column)
-        connected = {identifier for pair in shared for identifier in pair}
-        nodes = [{'id': f'excel:{identifier}', 'file_id': identifier, 'label': files[identifier], 'type': 'excel'} for identifier in sorted(connected, key=lambda item: files[item].casefold())]
-        edges = [{'source': f'excel:{left}', 'target': f'excel:{right}', 'kind': 'shared_columns', 'weight': len(columns), 'columns': columns[:6]} for (left, right), columns in shared.items()]
-        return {'nodes': nodes, 'edges': edges, 'title': 'Constelação de Dados', 'isolated_files': len(files) - len(connected)}
+        # Cada livro fica ligado apenas aos seus melhores vizinhos. Assim a
+        # constelação continua navegável mesmo com muitos Excels parecidos.
+        candidates = sorted(shared.items(), key=lambda item: (-len(item[1]), files[item[0][0]].casefold(), files[item[0][1]].casefold()))
+        degree = defaultdict(int)
+        sparse = []
+        for (left, right), columns in candidates:
+            if degree[left] >= 3 or degree[right] >= 3:
+                continue
+            sparse.append(((left, right), columns))
+            degree[left] += 1
+            degree[right] += 1
+        connected = {identifier for pair, _ in sparse for identifier in pair}
+        # Com um filtro ativo, mostrar também os resultados isolados é
+        # importante: eles satisfazem a pesquisa mesmo sem outra ligação.
+        visible = included if requested else connected
+        nodes = [{'id': f'excel:{identifier}', 'file_id': identifier, 'label': files[identifier], 'type': 'excel', 'columns': sorted(file_columns[identifier])} for identifier in sorted(visible, key=lambda item: files[item].casefold())]
+        edges = [{'source': f'excel:{left}', 'target': f'excel:{right}', 'kind': 'shared_columns', 'weight': len(columns), 'columns': sorted(columns)[:6]} for (left, right), columns in sparse]
+        popular = sorted(
+            ({'name': column, 'count': len(identifiers)} for column, identifiers in by_column.items()),
+            key=lambda item: (-item['count'], item['name'])
+        )[:80]
+        return {
+            'nodes': nodes,
+            'edges': edges,
+            'title': 'Constelação de Dados',
+            'isolated_files': len(files) - len(connected),
+            'total_files': len(files),
+            'filtered_files': len(included),
+            'selected_columns': sorted(requested),
+            'available_columns': popular,
+            'common_column_limit': common_limit,
+        }

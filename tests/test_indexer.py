@@ -56,6 +56,21 @@ class IndexerTests(unittest.TestCase):
         self.assertEqual(len(graph["nodes"]), 2)
         self.assertEqual(graph["edges"][0]["columns"], ["poc"])
 
+    def test_excel_graph_column_filter_requires_every_selected_column(self):
+        service = ExplorerService(self.catalog)
+        for filename, columns in (("one.xlsx", ["POC", "Concelho"]), ("two.xlsx", ["poc", "Concelho", "Area"]), ("three.xlsx", ["POC"])):
+            path = self.root / filename
+            path.touch()
+            file_id = self.catalog.upsert_file({"path": str(path), "directory": str(self.root), "filename": filename, "extension": ".xlsx", "size_bytes": 1, "created_at": None, "modified_at": None, "indexed_at": None, "file_hash": None, "mime_type": None, "file_category": "spreadsheet", "index_status": "indexed", "extraction_status": "complete"})
+            dataset_id, sheet_id = self.catalog.new_id(), self.catalog.new_id()
+            self.catalog.conn.execute("INSERT INTO datasets VALUES (?, ?, ?)", [dataset_id, file_id, "xlsx"])
+            self.catalog.conn.execute("INSERT INTO sheets VALUES (?, ?, ?, ?, ?)", [sheet_id, dataset_id, "Dados", 1, len(columns)])
+            for column in columns:
+                self.catalog.conn.execute("INSERT INTO dataset_columns VALUES (?, ?, ?, ?, ?, ?)", [self.catalog.new_id(), sheet_id, column, "VARCHAR", 0, 1])
+        graph = service.excel_similarity_graph(["POC", "Concelho"])
+        self.assertEqual([node["label"] for node in graph["nodes"]], ["one.xlsx", "two.xlsx"])
+        self.assertEqual(graph["edges"][0]["columns"], ["concelho", "poc"])
+
     def test_hidden_files_reveals_only_clicked_folder(self):
         first, second = self.root / "first", self.root / "second"
         first.mkdir(); second.mkdir()

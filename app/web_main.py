@@ -215,8 +215,9 @@ class Handler(BaseHTTPRequestHandler):
                 data = service.root_graph(include_files, focus) if not query.get("path") else service.folder_graph(query["path"][0], include_files, files_for_path=focus)
             return self.send_json(data)
         if route == "/api/excel-graph":
+            columns = [value.strip() for value in query.get("columns", [""])[0].split(",") if value.strip()]
             with catalog.lock:
-                data = service.excel_similarity_graph()
+                data = service.excel_similarity_graph(columns)
             return self.send_json(data)
         if route == "/api/progress":
             with progress_lock:
