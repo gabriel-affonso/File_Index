@@ -78,18 +78,36 @@ class ExplorerService:
             nodes.append({'id': f'folder:{folder_id}', 'label': name, 'type': 'folder', 'path': path, 'count': count or 0})
             edges.append({'source': 'workspace', 'target': f'folder:{folder_id}', 'kind': 'root'})
         return {'nodes': nodes, 'edges': edges, 'title': 'Pastas indexadas'}
-    def folder_graph(self, path: str, include_files: bool = True, file_limit: int = 80):
+    def folder_graph(self, path: str, include_files: bool = True, file_limit: int = 180, recursive: bool = True):
         current = self.catalog.conn.execute('SELECT folder_id,path,name,file_count FROM folders WHERE path=?', [path]).fetchone()
         if not current: return {'nodes': [], 'edges': [], 'title': 'Pasta não encontrada'}
         folder_id, folder_path, folder_name, count = current
         nodes = [{'id': f'folder:{folder_id}', 'label': folder_name, 'type': 'folder', 'path': folder_path, 'count': count or 0, 'center': True}]
         edges = []
-        folders, files = self.folder_children(path)
-        for child_id, child_path, child_name, child_count, _ in folders:
-            nodes.append({'id': f'folder:{child_id}', 'label': child_name, 'type': 'folder', 'path': child_path, 'count': child_count or 0})
-            edges.append({'source': f'folder:{folder_id}', 'target': f'folder:{child_id}', 'kind': 'contains'})
+        if recursive:
+            separator = '\\' if '\\' in path else '/'
+            descendant_pattern = path.rstrip('\\/') + separator + '%'
+            folders = self.catalog.conn.execute('''SELECT folder_id,path,parent_path,name,file_count FROM folders fo
+                WHERE (path = ? OR path LIKE ?) AND EXISTS (SELECT 1 FROM files f WHERE f.directory LIKE fo.path || '%' AND f.deleted=FALSE AND f.excluded=FALSE)
+                ORDER BY depth,path''', [path, descendant_pattern]).fetchall()
+            path_ids = {folder_path: folder_id for folder_id, folder_path, _, _, _ in folders}
+            for child_id, child_path, parent_path, child_name, child_count in folders:
+                if child_id == folder_id: continue
+                nodes.append({'id': f'folder:{child_id}', 'label': child_name, 'type': 'folder', 'path': child_path, 'count': child_count or 0})
+                parent_id = path_ids.get(parent_path, folder_id)
+                edges.append({'source': f'folder:{parent_id}', 'target': f'folder:{child_id}', 'kind': 'contains'})
+            files = self.catalog.conn.execute('''SELECT file_id,filename,path,file_category,directory FROM files
+                WHERE (directory = ? OR directory LIKE ?) AND deleted=FALSE AND excluded=FALSE ORDER BY filename LIMIT ?''', [path, descendant_pattern, file_limit]).fetchall()
+        else:
+            folders, direct_files = self.folder_children(path)
+            folders = [(child_id, child_path, path, child_name, child_count) for child_id, child_path, child_name, child_count, _ in folders]
+            files = [(file_id, filename, file_path, category, path) for file_id, filename, file_path, category, _ in direct_files[:file_limit]]
+            path_ids = {path: folder_id}
+            for child_id, child_path, _, child_name, child_count in folders:
+                nodes.append({'id': f'folder:{child_id}', 'label': child_name, 'type': 'folder', 'path': child_path, 'count': child_count or 0})
+                edges.append({'source': f'folder:{folder_id}', 'target': f'folder:{child_id}', 'kind': 'contains'})
         if include_files:
-            for file_id, filename, file_path, category, _ in files[:file_limit]:
+            for file_id, filename, file_path, category, directory in files:
                 nodes.append({'id': f'file:{file_id}', 'file_id': file_id, 'label': filename, 'type': 'file', 'path': file_path, 'category': category})
-                edges.append({'source': f'folder:{folder_id}', 'target': f'file:{file_id}', 'kind': 'contains'})
-        return {'nodes': nodes, 'edges': edges, 'title': folder_path, 'truncated': len(files) > file_limit}
+                edges.append({'source': f'folder:{path_ids.get(directory, folder_id)}', 'target': f'file:{file_id}', 'kind': 'contains'})
+        return {'nodes': nodes, 'edges': edges, 'title': folder_path, 'truncated': len(files) >= file_limit}
